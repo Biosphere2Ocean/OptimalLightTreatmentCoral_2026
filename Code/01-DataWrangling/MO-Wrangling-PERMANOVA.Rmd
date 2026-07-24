@@ -1,0 +1,632 @@
+---
+title: "Mini Ocean Lighting Project Wrangling: PERMANOVA"
+collaborators: Savanna Saunders, Renee Grambihler
+project: Mini Ocean Light Data
+institution: Biosphere 2 Ocean
+description: "Wrangles response variable data for use in non parametric statistics to analyze size, weight, and color changes or corals grown in Mini Ocean under different lighting treatments from Summer 2024 to Spring 2025 Coral Lighting Experiment"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+**Input**: 
+  `Coral Color_Weight Data.xlsx`: downloaded from google sheets file of same name on Box, contains raw data as weight, surface area, and rgb of each coral fragment before and after each trial
+  
+**Output**: 
+  `CoralColorWeightData_Rates.csv`: coral weight, surface area, and rgb (color) data as weekly rate of change per trial; one data point per coral per trial indicating the total change in response variable per trial
+    
+  `Weekly Weight Change by Trial.png`: histogram of weekly change in weight of each frag per trial 
+  
+  `Surface Area Change by Trial.png`: histogram of weekly change in surface area of each frag per trial
+  
+  `RGB Change by Trial.png`: histogram of weekly change in rgb of each frag per trial
+  
+  `Weight Change by Trial and Species.png`: histogram of weekly change in weight of each frag per trial and species
+  
+  `Surface Area Change by Trial and Species.png`: histogram of weekly change in surface area of each frag per trial and species
+  
+  `RGB Change by Trial and Species.png`: histogram of weekly change in rgb of each frag per trial and species
+  
+
+## Import Libraries
+```{r import-libs}
+library(tidyverse)
+library(readxl)
+library(openxlsx)
+library(rstatix)
+# get rid of scientific notation
+options(scipen = 9999)
+# Do this to avoid dplyr error message
+options(dplyr.summarise.inform = FALSE)  
+```
+
+# Import Data
+Use `Coral Color_Weight Data.xlsx` which is a downloaded version of the google sheets doc of the same name on Box. Using sheet "Before & After MO for R" 
+```{r import-data}
+df <- read_excel("InputData/Raw/CoralData/Coral Color_Weight Data.xlsx",
+                  sheet = "Before & After MO for R")
+```
+
+# Basic Wrangling 
+Clean up data for downstream transformations, identify control fragments, remove NAs, obvious outliers (such as RGB values that are out of the possible 0-255 range), combine all color columns into Mean RGB in order to use RGB values as in indicator of pigmentation. 
+```{r data-wrangling-basic}
+# create dataframe of all treatments
+df_edit <- df %>%
+  # take out Notes column and person column (at least for right now)
+  select(-Notes, -Person_weight_photos, -Person_ImageJ, -`Scale_pixels/cm`) %>% 
+  # split "fragment" column into 2 columns called "colony number" and "fragment number"
+  # "colony number" is the tens place from "fragment" and refers to the colony that each fragment is from and is unique for each colony
+  # "fragment number" is the tenths place from "fragment" and refers to the number 1-4 given to each fragment of each colony; these numbers are the same for each colony; 1-3 are experimental fragments that went in the MO, 4 is the control fragment that stayed in raceway 2
+  separate_wider_delim(cols = "Fragment",
+                       delim = ".",
+                       names = c("colony_number", "fragment_number"), 
+                       cols_remove = FALSE) %>%
+  # create column labeling each fragment as an experimental or control frag
+  mutate(Treatment = ifelse(fragment_number == 4, "Control", Treatment),
+         Trial = ifelse(Treatment == "Control", "Control", paste(Treatment, Trial)),
+         frag_id = paste(Species, Fragment, sep = " "), 
+         weight_g = as.numeric(Weight_g),
+         surface_area_mean_cm3 = as.numeric(Surface_Area_Mean_cm3),
+         surface_area_std = as.numeric(Surface_Area_Std),
+         red_mean = as.numeric(Red_Mean),
+         red_std = as.numeric(Red_Std),
+         green_mean = as.numeric(Green_Mean),
+         green_std = as.numeric(Green_Std),
+         blue_mean = as.numeric(Blue_Mean),
+         blue_std = as.numeric(Blue_Std)) %>%
+  na.omit() %>%
+  # quality control step taking out any color values greater than 255 since RGB values only go from 0-255
+  filter(red_mean <= 255 & green_mean <= 255 & blue_mean <= 255) %>%
+  # create a column that averages red, green, and blue values to get shade intensity: higher value = more bleached, lower value = less bleached
+  mutate(rgb_mean = (red_mean + green_mean + blue_mean)/3) %>%
+  #getting rid of the second copy with the capitalized column titles
+  select(-Weight_g, -Surface_Area_Mean_cm3, -Surface_Area_Std, -Red_Mean, -Red_Std, -Green_Mean, -Green_Std, -Blue_Mean, -Blue_Std) %>%
+  relocate(frag_id, .after = Date) #makes the df look nicer
+
+```
+
+
+# Data Distribution
+Look into the distribution of the data to see whether it is best to use parametric or non-parametric testing. 
+## Raw Data
+Run Shapiro-Wilks Test for Normality on the raw data and plot histograms. 
+### Shapiro-Wilks
+```{r distribution-raw-data-shapiro}
+# order the levels for the independent factors (alphabetical by default)
+df_edit$Time <- factor(df_edit$Time,levels = c('Before MO','After MO'))
+df_edit$Treatment <- factor(df_edit$Treatment,levels = c('PBC','PBR', 'Control'))
+
+# run shapiro-wilks test for normality on weight, surface area, and rgb for all data
+## Before
+df_edit %>%
+  filter(Time == "Before MO") %>%
+  shapiro_test(weight_g, surface_area_mean_cm3, rgb_mean)
+## After
+df_edit %>%
+  filter(Time == "After MO") %>%
+  shapiro_test(weight_g, surface_area_mean_cm3, rgb_mean)
+
+```
+P-Values: 
+  - Before MO: 
+    - Weight: < 0.0001
+    - Surface Area: < 0.0001
+    - RGB: 0.004
+    
+    - Weight Weekly: < 0.0001
+    - Surface Area Weekly: < 0.0001
+    - RGB Weekly: 0.004
+  - After MO:
+    - Weight: < 0.0001
+    - Surface Area: 0.0007
+    - RGB: 0.22
+    
+    - Weight Weekly: < 0.0001
+    - Surface Area Weekly: < 0.0001
+    - RGB Weekly: 0.22
+    
+Everything except for RGB After MO is not normally distributed. This suggests that a non-parametric PERMANOVA will give more accurate results than a parametric MANOVA. 
+
+### Histograms
+```{r distribution-raw-data-histogram}
+## weight 
+df_edit %>%
+  ggplot(aes(x = weight_g,
+             fill = Treatment, 
+             color = Treatment)) +
+  facet_grid(rows = vars(Treatment), cols = vars(Time)) +
+  geom_histogram() +
+  ggtitle("Weight (g)") +
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+
+## surface area
+df_edit %>%
+  ggplot(aes(x = surface_area_mean_cm3,
+             fill = Treatment, 
+             color = Treatment)) +
+  facet_grid(rows = vars(Treatment), cols = vars(Time)) +
+  geom_histogram() +
+  ggtitle("Surface Area (cm^3)")+
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+
+## rgb
+df_edit %>%
+  ggplot(aes(x = rgb_mean, 
+             fill = Treatment, 
+             color = Treatment)) +
+  facet_grid(rows = vars(Treatment), cols = vars(Time)) +
+  geom_histogram() +
+  ggtitle("Pigmentation (RGB Values)")+
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+
+
+```
+
+
+## Subtracted Data
+To reduce the complexity of the PERMANOVA that will occur downstream, subtract the two time points in the data from each other to give one value representing change over the course of each trial. 
+### Subtract After Measurements from Before Measurements
+Subtract "Before" from "After" to capture repeated measures aspect of data within the PERMANOVA. **Positive** values indicate an increase in the variable from beginning to end of the trial. **Negative** values indicate a decrease in the variable from beginning to end of the trial. Differences in Weight and Surface Area are interpreted normally. **Differences in RGB Values are interpreted inversely because a lower RGB Value represents a darker color.** This means that a negative RGB value indicates an increase in pigmentation, and a positive RGB value indicates a loss of pigmentation (bleaching). 
+```{r subtract-dependent-variables}
+# filter df_edit to have just before
+df_before <- df_edit %>%
+  filter(Time == "Before MO") %>%
+  select(frag_id, Species, Treatment, Trial, weight_g, surface_area_mean_cm3, rgb_mean)
+
+# filter df_edit to have just after
+df_after <- df_edit %>%
+  filter(Time == "After MO") %>%
+    select(frag_id, Species, Treatment, Trial, weight_g, surface_area_mean_cm3, rgb_mean)
+
+# subtract values: After MO - Before MO 
+df_subtracted <- df_after %>%
+  mutate(weight_g = df_after$weight_g - df_before$weight_g,
+         surface_area_mean_cm3 = df_after$surface_area_mean_cm3 - df_before$surface_area_mean_cm3,
+         rgb_mean = df_after$rgb_mean - df_before$rgb_mean)
+
+```
+
+### Subtracted Data Distribution
+#### Shapiro-Wilks
+```{r distribution-subtracted-data-shapiro}
+# order the levels for the independent factors (alphabetical by default)
+df_subtracted$Treatment <- factor(df_subtracted$Treatment,levels = c('PBC','PBR', 'Control'))
+df_subtracted$Trial <- factor(df_subtracted$Trial, levels = c("PBR 1", "PBC 1", "PBR 2", "PBR 3", "PBC 2", "PBR 4", "PBC 3", "Control"))
+
+# run shapiro-wilks test for normality on weight, surface area, and rgb for all data
+df_subtracted %>%
+  shapiro_test(weight_g, surface_area_mean_cm3, rgb_mean)
+# run shapiro-wilks test for normality on weight, surface area, and rgb by Trial
+df_subtracted %>%
+  group_by(Trial) %>%
+  shapiro_test(weight_g, surface_area_mean_cm3, rgb_mean) %>%
+  filter(p <= 0.05) #just show results for significant values
+
+```
+P-Values: 
+  Everything: 
+    - Weight: 0.0009
+    - Surface Area: < 0.0001
+    - RGB: 0.075
+  By Trial: 
+    - All normal except: 
+      - PBC 2 Surface Area: 0.026
+      - PBR 3 Surface Area: < 0.0001
+      - PBR 4 RGB: 0.0047
+      - Control Surface Area: < 0.0001
+      
+Non-normal distributions for weight and surface area. By trial, PBR 4 RGB and Control Surface Area are also not normally distributed. 
+
+#### Histograms
+##### Trial
+```{r distribution-subtracted-data-histogram-trial}
+# Histogram faceted by Trial
+## Weight
+plot_WeightChangeTri <- df_subtracted %>%
+  ggplot(aes(x = weight_g,
+             fill = Treatment, 
+             color = Treatment)) +
+  facet_grid(rows = vars(Trial)) +
+  geom_histogram() +
+  # add dotted line at x = 0
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  ggtitle("Weight (g)") +
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+# view plot
+plot_WeightChangeTri
+
+## Surface Area
+plot_SurfaceAreaChangeTri <- df_subtracted %>%
+  ggplot(aes(x = surface_area_mean_cm3,
+             fill = Treatment, 
+             color = Treatment)) +
+  facet_grid(rows = vars(Trial)) +
+  geom_histogram() +
+  # add dotted line at x = 0
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  ggtitle("Surface Area (cm^3)")+
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+# view plot 
+plot_SurfaceAreaChangeTri
+# save plot
+# ggsave("Surface Area Change by Trial.png", 
+#        plot = plot_SurfaceAreaChangeTri,
+#        path = "Figures/Wrangling")
+
+## RGB
+plot_RGBChangeTri <- df_subtracted %>%
+  ggplot(aes(x = rgb_mean,
+             fill = Treatment, 
+             color = Treatment)) +
+  facet_grid(rows = vars(Trial)) +
+  geom_histogram() +
+  # add dotted line at x = 0
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  ggtitle("Pigmentation (RGB Values)")+
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+# view plot 
+plot_RGBChangeTri
+# save plot
+# ggsave("RGB Change by Trial.png", 
+#        plot = plot_RGBChangeTri,
+#        path = "Figures/Wrangling")
+
+```
+ 
+##### Species and Trial
+```{r distribution-subtracted-data-histogram-species-trial}
+# Histogram faceted by Species and Trial
+## Weight 
+plot_WeightChangeSpecTri <- df_subtracted %>%
+  ggplot(aes(x = weight_g,
+             fill = Treatment, 
+             color = Treatment)) +
+  facet_grid(rows = vars(Trial), 
+             cols = vars(Species)) +
+  geom_histogram() +
+  # add dotted line at x = 0
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  ggtitle("Weight (g)") +
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+# view plot
+plot_WeightChangeSpecTri
+# save plot
+# ggsave("Weight Change by Trial and Species.png", 
+#        plot = plot_WeightChangeSpecTri,
+#        path = "Figures/Wrangling")
+
+## Surface Area
+plot_SurfaceAreaChangeSpecTri <- df_subtracted %>%
+  ggplot(aes(x = surface_area_mean_cm3,
+             fill = Treatment, 
+             color = Treatment)) +
+  facet_grid(rows = vars(Trial), 
+             cols = vars(Species)) +
+  geom_histogram() +
+  # add dotted line at x = 0
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  ggtitle("Surface Area (cm^3)")+
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+# view plot 
+plot_SurfaceAreaChangeSpecTri
+# save plot
+# ggsave("Surface Area Change by Trial and Species.png", 
+#        plot = plot_SurfaceAreaChangeSpecTri,
+#        path = "Figures/Wrangling")
+
+# RGB
+plot_RGBChangeSpecTri <- df_subtracted %>%
+  ggplot(aes(x = rgb_mean,
+             fill = Treatment, 
+             color = Treatment)) +
+  facet_grid(rows = vars(Trial), 
+             cols = vars(Species)) +
+  geom_histogram() +
+  # add dotted line at x = 0
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  ggtitle("Pigmentation (RGB Values)")+
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+# view plot 
+plot_RGBChangeSpecTri
+# save plot
+# ggsave("RGB Change by Trial and Species.png", 
+#        plot = plot_RGBChange,
+#        path = "Figures/Wrangling")
+
+```
+
+## Weekly Growth Rate Data
+Normalize the different trial lengths by converting the dependent variable values to weekly rates. PBR 1, PBC 1, and PBR 2 were all 3 weeks long, so divide those values by 3. PBR 3, PBC 2, PBR 4, and PBC 3 were all 6 weeks long, so divide those values by 6.
+```{r rate-subtracted-dependent-variables}
+#get weekly growth rates to normalize connor's trials which were 3 weeks to savanna's trials which were 6 weeks
+df_rates <- df_subtracted %>%
+  mutate(weight_g_weekly = ifelse((Treatment == "PBR" & Trial == 1) | 
+                                  (Treatment == "PBC" & Trial == 1) | 
+                                  (Treatment == "PBR" & Trial == 2),
+                                weight_g / 3, 
+                                weight_g / 6)) %>%
+  mutate(surface_area_cm3_weekly = ifelse((Treatment == "PBR" & Trial == 1) | 
+                                        (Treatment == "PBC" & Trial == 1) | 
+                                        (Treatment == "PBR" & Trial == 2),
+                                      surface_area_mean_cm3 / 3, 
+                                      surface_area_mean_cm3 / 6)) %>%
+  #create weekly rgb rate to normalize trial lengths
+  mutate(rgb_weekly = ifelse((Treatment == "PBR" & Trial == 1) | 
+                               (Treatment == "PBC" & Trial == 1) | 
+                               (Treatment == "PBR" & Trial == 2),
+                             rgb_mean / 3, 
+                             rgb_mean / 6)) %>%
+  select(-weight_g, -surface_area_mean_cm3, -rgb_mean)
+
+# save rates df as csv for use in permanova workbook
+# write_csv(df_rates, "InputData/Clean/CoralData/CoralColorWeightData_Rates.csv")
+
+```
+
+### T-Tests
+Run t-tests to see if there is a significant difference between the means of the subtracted data and the rate data. 
+```{r total-weekly-difference}
+# weight
+t.test(df_subtracted$weight_g, df_rates$weight_g_weekly, alternative = "two.sided", paired = T)
+
+# surface area
+t.test(df_subtracted$surface_area_mean_cm3, df_rates$surface_area_cm3_weekly, alternative = "two.sided", paired = T)
+
+# rgb
+t.test(df_subtracted$rgb_mean, df_rates$rgb_weekly, alternative = "two.sided", paired = T)
+
+```
+Weight: 
+  - P-Value: 0.000000000000002533
+  - Mean Difference (subtracted - weekly): 0.1005917
+  - Means are different from each other.   
+Surface Area: 
+  - P-Value: 0.00000001114
+  - Mean Difference (subtracted - weekly): 0.1864011
+  - Means are different from each other.   
+RGB: 
+  - P-Value: 0.4757
+  - Mean Difference (subtracted - weekly): -0.7763137
+  - Means are the same.  
+
+#### Box Plots
+A visual explanation of the t-test results. 
+```{r distribution-rate-data-box-plots}
+# weight
+cbind(df_rates, df_subtracted$weight_g) %>%
+  pivot_longer(cols = c("df_subtracted$weight_g", "weight_g_weekly"), 
+               names_to = "variable_names",
+               values_to = "variable_values") %>%
+  ggplot(aes(x = variable_names,
+             y = variable_values)) +
+  geom_boxplot() +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+
+# surface area
+cbind(df_rates, df_subtracted$surface_area_mean_cm3) %>%
+  pivot_longer(cols = c("df_subtracted$surface_area_mean_cm3", "surface_area_cm3_weekly"), 
+               names_to = "variable_names",
+               values_to = "variable_values") %>%
+  ggplot(aes(x = variable_names,
+             y = variable_values)) +
+  geom_boxplot() +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+
+# rgb
+cbind(df_rates, df_subtracted$rgb_mean) %>%
+  pivot_longer(cols = c("df_subtracted$rgb_mean", "rgb_weekly"), 
+               names_to = "variable_names",
+               values_to = "variable_values") %>%
+  ggplot(aes(x = variable_names,
+             y = variable_values)) +
+  geom_boxplot() +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+
+
+```
+
+
+### Rate Distribution
+```{r distribution-rate-data-shapiro}
+# order the levels for the independent factors (alphabetical by default)
+df_rates$Treatment <- factor(df_rates$Treatment,levels = c('PBC','PBR', 'Control'))
+df_rates$Trial <- factor(df_rates$Trial, levels = c("PBR 1", "PBC 1", "PBR 2", "PBR 3", "PBC 2", "PBR 4", "PBC 3", "Control"))
+
+# run shapiro-wilks test for normality on weight, surface area, and rgb for all data
+df_rates %>%
+  shapiro_test(weight_g_weekly, surface_area_cm3_weekly, rgb_weekly)
+# run shapiro-wilks test for normality on weight, surface area, and rgb by Trial
+df_rates %>%
+  group_by(Trial) %>%
+  shapiro_test(weight_g_weekly, surface_area_cm3_weekly, rgb_weekly) %>%
+  filter(p <= 0.05) #just show results for significant values
+
+```
+P-Values: 
+  Everything: 
+    - Weight Weekly: < 0.0001
+    - Surface Area Weekly: < 0.0001
+    - RGB Weekly: 0.075
+  By Trial: 
+    - PBC 2 Surface Area Weekly: 0.026
+    - PBR 3 Surface Area Weekly: < 0.0001
+    - PBR 4 RGB Weekly: 0.0047
+    - Control Surface Area Weekly: < 0.0001
+
+While the means are different from each other, the distribution of the rates data is similar to the subtracted data - just now the trials are comparable to each other. 
+
+#### Histograms
+##### Trial
+```{r distribution-rate-data-histogram-trial}
+# Weekly Weight
+#plot_WeeklyWeightChangeTri <- 
+df_rates %>%
+  ggplot(aes(x = weight_g_weekly,
+             fill = Treatment,
+             color = Treatment)) +
+  facet_grid(rows = vars(Trial)) +
+  geom_histogram() +
+  # add dotted line at x = 0
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  ggtitle("Weekly Weight (g)") +
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+# view plot
+#plot_WeeklyWeightChangeTri
+# save plot
+# ggsave("Weekly Weight Change by Trial.png",
+#        plot = plot_WeeklyWeightChangeTri,
+#        path = "Figures/Wrangling")
+
+# Weekly Surface Area
+df_rates %>%
+  ggplot(aes(x = surface_area_cm3_weekly,
+             fill = Treatment,
+             color = Treatment)) +
+  facet_grid(rows = vars(Trial)) +
+  geom_histogram() +
+  # add dotted line at x = 0
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  ggtitle("Surface Area (cm^3)") +
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+
+# Weekly RGB
+df_rates %>%
+  ggplot(aes(x = rgb_weekly,
+             fill = Treatment,
+             color = Treatment)) +
+  facet_grid(rows = vars(Trial)) +
+  geom_histogram() +
+  # add dotted line at x = 0
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  ggtitle("Weekly Pigmentation (RGB Values)") +
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+
+```
+##### Species and Trial
+```{r distribution-rate-data-histogram-species-trial}
+# Weekly Weight
+df_rates %>%
+  ggplot(aes(x = weight_g_weekly,
+             fill = Treatment,
+             color = Treatment)) +
+  facet_grid(rows = vars(Trial),
+             cols = vars(Species)) +
+  geom_histogram() +
+  # add dotted line at x = 0
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  ggtitle("Weekly Weight (g)") +
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+
+# surface area
+df_rates %>%
+  ggplot(aes(x = surface_area_cm3_weekly,
+             fill = Treatment,
+             color = Treatment)) +
+  facet_grid(rows = vars(Trial),
+             cols = vars(Species)) +
+  geom_histogram() +
+  # add dotted line at x = 0
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  ggtitle("Weekly Weight (g)") +
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+
+# rgb
+df_rates %>%
+  ggplot(aes(x = rgb_weekly,
+             fill = Treatment,
+             color = Treatment)) +
+  facet_grid(rows = vars(Trial),
+             cols = vars(Species)) +
+  geom_histogram() +
+  # add dotted line at x = 0
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  ggtitle("Weekly Weight (g)") +
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+
+
+```

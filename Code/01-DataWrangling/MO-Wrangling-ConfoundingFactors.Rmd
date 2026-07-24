@@ -1,0 +1,273 @@
+---
+Title: "Mini Ocean Lighting Project Wrangling: Compounding Factors"
+Collaborators: "Renee Grambihler, Savanna Saunders"
+Project: "Mini Ocean Light Data"
+Institution: "Biosphere 2 Ocean"
+Description: "Wrangles environmental data for use in compounding factors statistical testing"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+**Input**
+  `Mini Ocean Nutrient Data.xlsx`: colorimetry data for mini ocean for summer, fall, and spring
+  
+  `Raceway2NutrientData.xlsx`: colorimetry data for all sites for summer, fall, and spring
+  
+  `PRO DSS MO All - Sheet1.csv`: water quality data from YSI ProDSS instrument for mini ocean for summer, fall, and spring
+  
+  `prodssbackup-250328-140416 All Sites.csv`: water quality data from YSI ProDSS instrument for all sites from September 2024 - March 2025. Used to get Raceway 2 (Control) parameters. 
+  
+  `Raceway2Parameters_2024-05-29_2025-09-30_RoundsForm.xlsx`: water quality data from Google Form of daily rounds for Raceway 2 (Control) to complete time gap with summer data. YSI ProDSS is used to obtain data, but fewer parameters are recorded: only temperature (F), salinity (PSU), and pH. 
+  
+  `DLI-All.xlsx`: daily light integral data made from PAR data recorded over summer, fall, and spring. File created in `Wrangling-PAR.Rmd`. 
+
+**Output**
+  `All-Environmental-Variables-Wide.xlsx`: all available data from all environmental variables recorded over summer, fall, and spring experiments in wide form.
+  
+  `All-Environmental-Variables-Long.xlsx`: all available data from all environmental variables recorded over summer, fall, and spring experiments in long form. 
+
+## Import Libraries
+```{r import-libraries}
+library(tidyverse)
+library(readxl)
+library(writexl)
+library(rstatix)
+library(lubridate)
+# get rid of scientific notation
+options(scipen = 9999)
+# avoid dplyr error message
+options(dplyr.summarise.inform = FALSE)  
+```
+
+# Import Data
+```{r import-data}
+#### Nutrients #### 
+# mini ocean (colorimetry) 
+dfNutrients <- read_excel("InputData/Raw/WaterQuality/Nutrients/Mini Ocean Nutrient Data.xlsx") %>%
+  select(-Initials, -Notes, -Location)
+   
+# raceway 2 (colorimetry)
+dfNutrients_r2 <- read_excel("InputData/Raw/WaterQuality/Nutrients/Raceway2NutrientData.xlsx") %>%
+  #grab just raceway 2 obs
+  filter(Location == "Raceway 2") %>%
+  #get rid of location column to match other nutrients df
+  select(-Location)
+ 
+#### Water Quality #### 
+# YSI ProDSS Mini Ocean
+dfYSI <- dfYSI <- read_csv("InputData/Raw/WaterQuality/ProDSS/PRO DSS MO All - Sheet1.csv") %>%
+  select(-`User ID`, -`Unit ID`)%>%
+  mutate(Date = as.Date(Date, format = "%m/%d/%y"))%>%
+  rename(`Temperature (ºF)` = "¬∞F",
+         `Dissolved Oxygen (%)` = "DO %",
+         `Dissolved Oxygen (mg/L)` = "DO mg/L",
+         `Conductivity (µS/cm)` = "C-uS/cm",
+         `Salinity (PSU)` = "SAL-PSU",
+         `ORP (mV)` = "ORP mV",
+         `Chlorophyll (RFU)` = "Chl RFU",
+         `Phycoerythrin (RFU)` = "PE RFU")
+
+# YSI ProDSS All Sites Sept 2024 - March 2025  (to get Control from R2)
+dfYSI_allsites <- read_csv("InputData/Raw/WaterQuality/ProDSS/prodssbackup-250328-140416 All Sites.csv") %>%
+  mutate(Date = as.Date(Date, format = "%m/%d/%y"))%>%
+  # take out unit id, user id, dissolved oxygen, and conductivity columns
+  select(-c("Unit ID", "User ID", "DO %", "DO mg/L", "C-uS/cm")) %>%
+  # grab just Raceway 2 data
+  filter(Site == "R2") %>%
+  rename(`Temperature (ºF)` = "F",
+         `Salinity (PSU)` = "SAL-PSU",
+         `ORP (mV)` = "ORP mV",
+         `Chlorophyll (RFU)` = "Chl RFU",
+         `Phycoerythrin (RFU)` = "PE RFU")
+
+# YSI ProDSS R2 Basic Parameters May 2024 - Sept 2024 (to get control. only have temp, salinity, and pH for Connor's trials because ProDSS downloading port was broken by the time we needed to add Connor's data to Savanna's honors thesis data)
+
+####  DLI #### 
+dfDLI <- read_excel("InputData/Clean/EnvironmentalData/DLI-All.xlsx") %>%
+  #remove sum of par values for each day which was used to make DLI values
+  select(-daily_par_sum)
+
+```
+
+# Data Wrangling
+Using the mean of each day where there is more than one observation for each day. 
+## Nutrient Data
+```{r data-wrangling-nutrient}
+# mini ocean data 
+dfNutrients_edit <- dfNutrients %>%
+  mutate(Ammonia = ifelse(Ammonia == "---", 0.00, Ammonia), #change --- values to 0.00 for ammonia
+         Ammonia = as.numeric(Ammonia),
+         #round columns to correct sig figs from colorimeter
+         Ammonia = round(Ammonia, digits = 2),
+         Calcium = ifelse(Calcium == 2.2, 220, Calcium), #change probable Calcium input error from 2.20 to 220, which matches the range of surrounding data
+         Iron = round(Iron, digits = 3),
+         Silica = ifelse(Silica == "---", 0.00, Silica), #change --- values to 0.00 for Silica
+         Silica = as.numeric(Silica),
+         #round columns to correct sig figs from colorimeter
+         Silica = round(Silica, digits = 2),
+         `Nitrate HR` = round(`Nitrate HR`, digits = 1),
+         `Nitrate MR` = round(`Nitrate MR`, digits = 1),
+         Phosphate = round(Phosphate, digits = 2)) %>%
+  select(-pH) %>% #use pH from YSI since it has more data and is more accurate
+  mutate(Date = as.Date(Date)) %>%
+   #add trial by dates
+  mutate(Trial = NA,
+         Trial = ifelse(Date >= "2024-06-03" & Date < "2024-06-17", "PBR 1", Trial),
+         Trial = ifelse(Date >= "2024-06-17" & Date < "2024-07-09", "PBC 1", Trial),
+         Trial = ifelse(Date >= "2024-07-09" & Date < "2024-07-29", "PBR 2", Trial),
+         Trial = ifelse(Date >= "2024-09-29" & Date < "2024-11-11", "PBR 3", Trial),
+         Trial = ifelse(Date >= "2024-11-11" & Date < "2024-12-20", "PBC 2", Trial),
+         Trial = ifelse(Date >= "2024-12-20" & Date < "2025-02-03", "PBR 4", Trial),
+         Trial = ifelse(Date >= "2025-02-03" & Date <= "2025-03-17", "PBC 3", Trial), 
+         .after = Date) %>%
+  filter(is.na(Trial) == FALSE) %>%
+  mutate(Trial = factor(Trial, levels = c("PBR 1", "PBC 1", "PBR 2", "PBR 3", "PBC 2", "PBR 4", "PBC 3"))) %>%
+  #use trial column to make treatment column
+  separate(col = Trial,
+           sep = " ",
+           into = c("Treatment", "trial_num"), 
+           remove = FALSE) %>%
+  select(-trial_num) %>%
+  filter(Trial != "PBR 4") #took pbr 4 out of nonparametric due to outliers in dependent variables
+
+# r2 data 
+dfNutrients_r2_edit <- dfNutrients_r2 %>%
+  mutate(Ammonia = ifelse(Ammonia == "---", 0.00, Ammonia), #change --- values to 0.00 for ammonia
+         Ammonia = as.numeric(Ammonia),
+         #round columns to correct sig figs from colorimeter
+         Ammonia = round(Ammonia, digits = 2),
+         Calcium = ifelse(Calcium == 2.2, 220, Calcium), #change probable Calcium input error from 2.20 to 220, which matches the range of surrounding data
+         Iron = round(Iron, digits = 3),
+         Silica = ifelse(Silica == "---", 0.00, Silica), #change --- values to 0.00 for Silica
+         Silica = as.numeric(Silica),
+         #round columns to correct sig figs from colorimeter
+         Silica = round(Silica, digits = 2),
+         `Nitrate HR` = round(`Nitrate HR`, digits = 1),
+         `Nitrate MR` = round(`Nitrate MR`, digits = 1),
+         Phosphate = round(Phosphate, digits = 2)) %>%
+  select(-pH) %>% #use pH from YSI since it has more data and is more accurate
+  mutate(Date = as.Date(Date)) %>%
+  mutate(Trial = "Control", .after = Date) %>%
+  mutate(Treatment = "Control", .after = Trial)
+  
+dfNutrients_edit <- rbind(dfNutrients_edit, dfNutrients_r2_edit)
+
+```
+
+## YSI ProDSS Data
+```{r data-wrangling-prodss}
+dfYSI_edit <- dfYSI %>%
+  #get rid of columns that won't be used. DO not reliable on prodss
+  select(-c("Site", "Dissolved Oxygen (%)", "Dissolved Oxygen (mg/L)", "Conductivity (µS/cm)")) %>%
+  #convert fahrenheit to celcius
+  mutate(`Temperature (ºC)` = (`Temperature (ºF)` - 32) * 5 / 9, .after = Time) %>%
+  select(-`Temperature (ºF)`) %>%
+  na.omit() %>%
+  group_by(Date) %>%
+  #data was recorded once per day except for during scheduled holidays when it was automatically recorded once every 15 minutes, so take average of each day which will reduce multiple days to 1 entry each
+  summarise(across(where(is.numeric), ~ mean(.x, na.rm = TRUE))) %>%
+  #add trial by dates
+  mutate(Trial = case_when(
+    Date >= "2024-06-03" & Date < "2024-06-17" ~ "PBR 1",
+    Date >= "2024-06-17" & Date < "2024-07-09" ~ "PBC 1",
+    Date >= "2024-07-09" & Date < "2024-07-29" ~ "PBR 2",
+    Date >= "2024-09-30" & Date < "2024-11-11" ~ "PBR 3",
+    Date >= "2024-11-11" & Date < "2024-12-20" ~ "PBC 2",
+    Date >= "2024-12-20" & Date < "2025-02-03" ~ "PBR 4",
+    Date >= "2025-02-03" & Date <= "2025-03-17" ~ "PBC 3",
+  ), .after = Date) %>%
+  #use trial column to make treatment column
+  separate(col = Trial,
+           sep = " ",
+           into = c("Treatment", "trial_num"), 
+           remove = FALSE) %>%
+  select(-trial_num) %>%
+  filter(is.na(Trial) == FALSE) %>%
+  mutate(Trial = factor(Trial, levels = c("PBR 1", "PBC 1", "PBR 2", "PBR 3", "PBC 2", "PBR 4", "PBC 3"))) %>%
+  #filter(Trial != "PBR 4") %>% #took pbr 4 out of nonparametric due to outliers
+  filter(Date <= "2025-03-17" & Date >= "2024-06-03") %>%
+  filter(Trial != "PBR 4") #took pbr 4 out of nonparametric due to outliers in dependent variables
+
+# ProDSS R2 - Savanna's data 
+dfYSI_sav <- dfYSI_allsites %>%
+  mutate(Date = as.Date(Date)) %>%
+  # filter out dates after 3/17/25
+  filter(Date <= "2025-03-17") %>%
+  #convert fahrenheit to celcius
+  mutate(`Temperature (ºC)` = (`Temperature (ºF)` - 32) * 5 / 9, .after = Time) %>%
+  select(-`Temperature (ºF)`) %>%
+  na.omit() %>%
+  group_by(Date) %>%
+  #data was recorded once per day except for a few days so take average of each day which will reduce multiple days to 1 entry each
+  summarise(across(where(is.numeric), ~ mean(.x, na.rm = TRUE))) %>%
+  mutate(Trial = "Control", .after = Date) %>%
+  mutate(Treatment = "Control", .after = Trial)
+
+# ProDSS R2 - Connor's data
+dfYSI_basic_edit <- dfYSI_basic %>%
+  separate(col = Datetime, into = c("Date", "Time"), sep = " ", remove = TRUE) %>%
+  mutate(Date = as.Date(Date)) %>%
+  #convert fahrenheit to celcius
+  mutate(`Temperature (ºC)` = (temp_f - 32) * 5 / 9, .after = Time) %>%
+  select(-temp_f) %>%
+  na.omit() %>%
+  group_by(Date) %>%
+  #data was recorded once per day except for a few days so take average of each day which will reduce multiple days to 1 entry each
+  summarise(across(where(is.numeric), ~ mean(.x, na.rm = TRUE))) %>%
+  mutate(Trial = "Control", .after = Date) %>%
+  mutate(Treatment = "Control", .after = Trial) %>%
+  rename(`Salinity (PSU)` = "salinity") %>%
+  filter(Date < "2024-09-20") %>%
+  # move column to bind with rest of data later
+  relocate(pH, .after = `Salinity (PSU)`) %>%
+  # add empty columns to bind with rest of data later
+  mutate(`ORP (mV)` = NA, 
+         `Chlorophyll (RFU)` = NA,
+         `Phycoerythrin (RFU)` = NA)
+
+dfYSI_r2 <- rbind(dfYSI_basic_edit, dfYSI_sav)
+
+```
+
+## All Environmental Data
+```{r combine-data}
+dfAllEnvVar <- data.frame(Date = seq.Date(from = as.Date("2024-05-29"), to = as.Date("2025-03-17"), by = "1 day")) %>%
+  mutate(Trial = case_when(
+    Date >= "2024-06-03" & Date < "2024-06-17" ~ "PBR 1",
+    Date >= "2024-06-17" & Date < "2024-07-09" ~ "PBC 1",
+    Date >= "2024-07-09" & Date < "2024-07-29" ~ "PBR 2",
+    Date >= "2024-09-30" & Date < "2024-11-11" ~ "PBR 3",
+    Date >= "2024-11-11" & Date < "2024-12-20" ~ "PBC 2",
+    Date >= "2025-02-03" & Date <= "2025-03-17" ~ "PBC 3")) %>%
+  left_join(dfYSI_edit) %>%
+  rbind(dfYSI_r2) %>%
+  left_join(dfDLI) %>%
+  left_join(dfNutrients_edit)%>%
+  filter(is.na(Trial) == FALSE) %>%
+  select(-Treatment) %>%
+  separate(col = Trial,
+           sep = " ",
+           into = c("Treatment", "trial_num"),
+           remove = FALSE) %>%
+  select(-trial_num) %>%
+  filter(is.na(Trial) == FALSE)
+
+# long version of dfAllEnvVar
+dfAllEnvVar_long <- dfAllEnvVar %>%
+  pivot_longer(cols = 4:19,
+               names_to = "variable_names", 
+               values_to = "variable_values")
+
+```
+
+
+```{r write-excel-files}
+# environmental variables wide
+write_xlsx(dfAllEnvVar, "InputData/Clean/All-Environmental-Variables-Wide.xlsx")
+
+# environmental variables long
+write_xlsx(dfAllEnvVar_long, "InputData/Clean/All-Environmental-Variables-Long.xlsx")
+
+```
+

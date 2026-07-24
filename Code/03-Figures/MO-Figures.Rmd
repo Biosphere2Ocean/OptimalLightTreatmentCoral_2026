@@ -1,0 +1,676 @@
+---
+title: "Mini Ocean Lighting Project: Figures"
+author: Savanna Saunders, Renee Grambihler
+project: Mini Ocean Light Data
+institution: Biosphere 2 Ocean
+description: "Figures created from non parametric statistical analysis and raw data to analyze size, weight, and color changes or corals grown in Mini Ocean under different lighting treatments for Summer 2024 to Spring 2025 Coral Lighting Experiment"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+**Input**:
+  `CoralColorWeightData_Rates.csv`: coral data with Before and After values subtracted from each other and then divided either by 3 or 6 depending on what Trial the data is from in order to get a weekly rate of change. 
+
+  `All-Environmental-Variables-Wide.xlsx`: all environmental data (nutrients, water quality, DLI) from MO and R2 during all trials in wide format
+
+  `All-Environmental-Variables-Long.xlsx`: all environmental data (nutrients, water quality, DLI) from MO and R2 during all trials in long format
+
+  `MOStats_PERMANOVA_Pairwise_All.xlsx`: results of Pairwise PERMANOVA tests run on Trial, Treatment, and Species separately. 
+
+  `MOStats_TukeyTestResults.xlsx`: results of Tukey Test run with interactions between the independent variables.
+
+**Output**:
+  `HeatMap-PairwisePERMANOVA.png`: heat map of pairwise PERMANOVA results by treatment, trial, and species.
+  
+  `HeatMap-TukeyTest-Treatment.png`: heat map of tukey test results by treatment.
+  
+  `HeatMap-TukeyTest-TreatmentSpecies-Between.png`: heat map of tukey test results between groups factors for treatment and species.
+  
+  `HeatMap-TukeyTest-TreatmentSpecies-Within.png`: heat map of tukey test results within groups factors for treatment and species. 
+  
+  `BoxPlot-All-Treatment-Species.png`: box plot of all response variables by treatment and species. 
+  
+  `BoxPlot-DLI-Per-Trial.png`: box plot of daily light integral (DLI) values by trial.
+  
+  `BoxPlot-RGB-PBCTrials.png`: box plot of RGB values for the PBC trials.
+  
+  `ConfoundingFactors-Ranges-Stated.xlsx`: table of ranges for confounding factor variables stated as "minimum - maximum"
+
+  `ConfoundingFactors-Ranges-Difference.xlsx`: table of ranges for confounding factor varibles as the difference between the maximum and minimum values. 
+
+
+
+```{r import-libraries}
+library(tidyverse)
+library(readxl)
+library(rstatix)
+library(lubridate)
+library(lmtest)
+library(modelr)
+library(ggpubr)
+library(radiant.data)
+# get rid of scientific notation
+options(scipen = 9999)
+# avoid dplyr error message
+options(dplyr.summarise.inform = FALSE)  
+```
+
+# Import Data and Wrangle
+Data wrangling includes adding columns for labeling and other figure aesthetics, but most important is **multiplying RGB values by -1** so that decreases in RGB correspond to decreases in pigmentation and figures will not have to be read inversely. 
+```{r new-data-import}
+# coral data 
+dfCoral <- read_csv("InputData/Clean/CoralData/CoralColorWeightData_Rates.csv") %>%
+  # get rid of trial PBR 4 due to light timer malfunction keeping lights on continuously for 10 days
+  filter(Trial != "PBR 4") %>%
+  #make species names paper-ready
+  mutate(Species = case_when(
+    Species == "Mcav" ~ "M. cavernosa",
+    Species == "Ofav" ~ "O. faveolata",
+    Species == "Pcli" ~ "P. clivosa"
+  )) %>%
+  # change pigmentation signs to make reading the figure more intuitive since negative values indicated increased pigmentation 
+  mutate(rgb_weekly = rgb_weekly * -1)
+
+# environmental data
+# wide / regular 
+dfEnvVar <- read_excel("InputData/Clean/EnvironmentalData/All-Environmental-Variables-Wide.xlsx")
+# long
+dfEnvVar_long <- read_excel("InputData/Clean/EnvironmentalData/All-Environmental-Variables-Long.xlsx")
+
+# results files
+# pairwise permanova 
+dfPairPerm <- read_excel("OutputData/StatisticsResults/MOStats_PERMANOVA_Pairwise_All.xlsx") %>%
+  #substitute _ for white space in comparison column for plotting aesthetics 
+  mutate(comparison = gsub("_", " ", comparison),
+         #change order of some comparison observations for plotting aesthetics 
+         comparison = gsub("PBR vs Control", "Control vs PBR", comparison),
+         comparison = gsub("PBR 1 vs Control", "Control vs PBR 1", comparison),
+         comparison = gsub("PBC 1 vs PBR 2", "PBR 2 vs PBC 1", comparison),
+         comparison = gsub("PBC 1 vs PBR 3", "PBR 3 vs PBC 1", comparison),
+         comparison = gsub("PBC 2 vs PBR 2", "PBR 2 vs PBC 2", comparison),
+         comparison = gsub("PBC 2 vs PBR 3", "PBR 3 vs PBC 2", comparison)) %>%
+  #change species names to look correct on plots 
+  mutate(comparison = gsub("Mcav", "M. cavernosa", comparison),
+         comparison = gsub("Ofav", "O. faveolata", comparison),
+         comparison = gsub("Pcli", "P. clivosa", comparison)) %>%
+  mutate(term = factor(term, levels = c("Treatment", "Trial", "Species"))) %>%
+  #add column with significance stars 
+  mutate(p_sig = case_when(
+    p < 0.001 ~ "***",
+    p >= 0.001 & p < 0.01 ~ "**",
+    p >= 0.01 & p < 0.05 ~ "*",
+    p >= 0.05 ~ "", 
+  ))
+
+# tukey 
+dfTukey <- read_excel("OutputData/StatisticsResults/MOStats_TukeyTestResults.xlsx") %>%
+  #change dependent variable names to look better on plots 
+  mutate(dependent_variable_names = case_when(
+    dependent_variable_names == "rgb_weekly" ~ "Pigmentation (RGB)",
+    dependent_variable_names == "surface_area_cm3_weekly" ~ "Surface Area (cm^3)",
+    dependent_variable_names == "weight_g_weekly" ~ "Weight (g)"
+  )) %>%
+  # change pigmentation signs to make reading the figure more intuitive since negative values indicated increased pigmentation 
+  mutate(estimate = ifelse(dependent_variable_names == "Pigmentation (RGB)",
+                           estimate * -1,
+                           estimate))
+
+
+```
+
+# Color Palettes
+Set up color palettes we might want to use. There's cool, warm, and a few specific ones from the Virids package. All of these are colorblind friendly. 
+```{r color-options}
+#ColorBrewer 
+# warm palette
+cols_warm <- c("#feedde", "#fdbe85", "#fd8d3c", "#e6550d", "#a63603")
+
+# cool palette
+cols_cool <- c("#f1eef6", "#d7b5d8", "#df65b0", "#dd1c77", "#980043")
+
+# Viridis
+# rocket palette full
+cols_rocket <- c("#FAEBDDFF","#F4875EFF","#CB1B4FFF","#611F53FF","#03051AFF")
+
+# rocket palette 3 colors
+cols_rocket_sm <- c("#611F53FF","#F4875EFF","#FAEBDDFF")
+
+# rocket pallette 6 diverging colors 
+cols_rocket_div <- c("#a63603","#F4875EFF","#FAEBDDFF","#CB1B4FFF","#611F53FF","#03051AFF")
+
+```
+
+
+# Heat Maps
+Similar to figure found in Hackerott et al. 2025: <https://doi.org/10.21203/rs.3.rs-5247850/v1>
+## Pairwise PERMANOVA
+Plot pairwise PERMANOVA results by treatment, trial, and species. Significant results are indicated by the presence of stars on each cell. Darker colors indicate a higher r^2 value. 
+```{r heat-map-pairwise-permanova}
+# order comparison column by term column factors so it looks nice in the plot
+dfPairPerm$comparison <- factor(dfPairPerm$comparison, levels = (dfPairPerm$comparison)[order(dfPairPerm$term, decreasing = TRUE)])
+
+heatmap_PairPerm <- dfPairPerm %>%
+  ggplot(aes(x = term,
+             y = comparison, 
+             fill = R2)) +
+  geom_tile(color = "white",
+            lwd = 0.5,
+            linetype = 1) +
+  geom_text(aes(label = p_sig), color = "white") +
+  labs(fill = expression(r^2)) +
+  scale_fill_stepsn(colors = cols_rocket) +
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank(), 
+        panel.border = element_blank(),
+        axis.line.x.bottom = element_line(),
+        axis.line.y.left = element_line(),
+        axis.text.x = element_text(angle = 45, hjust = 1, color = "black"),
+        axis.text.y = element_text(color = "black"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank())
+
+heatmap_PairPerm
+
+# save plot 
+# ggsave("Figures/StatisticsResults/HeatMaps/HeatMap-PairwisePERMANOVA.png", plot = heatmap_PairPerm)
+
+```
+
+## Tukey Test
+### Treatment
+Plot tukey test results by Treatment. Y-axis shows Treatment comparisons as Treatment 1 minus (vs) Treatment 2, and x-axis shows each of the dependent variables. Darker colors indicate a higher/positive difference, and lighter colors indicate a lower/negative difference between treatments. For example, PBC was more pigmented than Control. 
+#### Data Preparation 
+```{r heat-map-tukey-treatment-df}
+# data wrangling
+dfHeatMap_Tukey_Treat <- dfTukey %>%
+  filter(term == "Treatment") %>%
+  # estimate comes from group 2 - group 1
+  mutate(comparison = paste(group2, "vs", group1, sep = " ")) %>%
+  # remove unused columns
+  select(-group2, -group1, -conf.low, -conf.high) %>% 
+  # remove 'ns' to clean up the plot aesthetically  
+  mutate(p.adj.signif = ifelse(p.adj.signif == "ns", "", p.adj.signif)) %>%
+  # normalize estimates to same scale so we can see the differences in weight and surface area rather than just pigment since the RGB values are much larger than the weight and surface area values  
+  # normalize to [-1,1] 
+  mutate(z_score = (estimate - mean(estimate)) / sd(estimate), 
+         min_max = (2 * (estimate - min(estimate)) / 
+                           (max(estimate) - min(estimate)) -1), 
+         .after = estimate)
+
+```
+
+#### Plot 
+```{r heat-map-tukey-treat-plot}
+# plot data 
+heatmap_tukey_treat <- dfHeatMap_Tukey_Treat %>%
+  ggplot(aes(x = dependent_variable_names,
+             y = comparison, 
+             fill = estimate)) +
+  geom_tile(color = "white",
+            lwd = 0.5,
+            linetype = 1) +
+  coord_fixed() +
+  # put estimate values and significance stars on grid boxes 
+  geom_text(aes(label = paste(p.adj.signif,
+                              round(estimate, digits = 4), sep = " ")),
+            color = "white",
+            size = 3) +
+  scale_x_discrete(labels = c("Pigmentation (RGB)", expression(paste("Surface Area (c", m^3, ")", sep = "")), "Weight (g)")) +
+  scale_fill_stepsn(
+    name = "Estimate",
+    colors = cols_rocket
+  ) +
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_rect(fill = "white"), 
+        axis.line = element_blank(),
+        axis.text.x = element_text(angle = 45, 
+                                   hjust = 1, 
+                                   color = "black", 
+                                   size = 8),
+        axis.text.y = element_text(color = "black", size = 8),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        legend.text = element_text(size = 8),
+        legend.title = element_text(size = 9))
+
+# view plot
+heatmap_tukey_treat
+
+#save plot 
+# ggsave("Figures/StatisticsResults/HeatMaps/HeatMap-TukeyTest-Treatment.png",
+#        plot = heatmap_tukey_treat,
+#        height = 4, width = 4)
+```
+
+
+### Treatment and Species: Between Groups
+Create a heatmap to plot between groups differences. The values shown in each cell are the differences between the response variables for comparisons of the 3 treatments, with each panel representing one Species. For example, the first row shows the difference in estimate between PBR and PBC for each of the response variables, which is then faceted by Species, so the first panel is for Mcav.
+#### Data Preparation
+```{r heat-map-tukey-treatment-species-btwn-df}
+dfTukey_TreatSpec <- dfTukey %>%
+  filter(term == "Treatment:Species") %>%
+  separate(col = group1, into = c("group1.treatment", "group1.species"), sep = ":") %>%
+  separate(col = group2, into = c("group2.treatment", "group2.species"), sep = ":") %>%
+  mutate(group1.species = ifelse(group1.species == "Mcav", "M. cavernosa", group1.species),
+        group1.species = ifelse(group1.species == "Ofav", "O. faveolata", group1.species),
+        group1.species = ifelse(group1.species == "Pcli", "P. clivosa", group1.species)) %>%
+  mutate(group2.species = ifelse(group2.species == "Mcav", "M. cavernosa", group2.species),
+        group2.species = ifelse(group2.species == "Ofav", "O. faveolata", group2.species),
+        group2.species = ifelse(group2.species == "Pcli", "P. clivosa", group2.species)) 
+  
+# subset to compare same species in different treatments 
+# mcav 
+dfTukey_mcav <- dfTukey_TreatSpec %>%
+  filter(group1.species == "M. cavernosa" & group2.species == "M. cavernosa")
+# ofav
+dfTukey_ofav <- dfTukey_TreatSpec %>%
+  filter(group1.species == "O. faveolata" & group2.species == "O. faveolata")
+# pcli 
+dfTukey_pcli <- dfTukey_TreatSpec %>%
+  filter(group1.species == "P. clivosa" & group2.species == "P. clivosa")
+
+# combine all direct species comparisons 
+dfTukey_TreatSpec <- rbind(dfTukey_mcav, dfTukey_ofav, dfTukey_pcli) %>%
+  # use group1.species as species column to facet by in plot 
+  mutate(species = group1.species) %>%
+  # make comparison column of treatment 1 vs treatment 2: estimate comes from group 2-group 1
+  mutate(comparison = paste(group2.treatment, "vs", group1.treatment, sep = " ")) %>%
+  rename(Estimate = estimate) %>%
+  mutate(p.adj.signif = ifelse(p.adj.signif == "ns", "", p.adj.signif)) 
+
+
+```
+
+#### Plot 
+```{r heat-map-tukey-treatment-species-btwn-plot}
+# plot
+HeatMap_Tukey_TreatSpec_btwn <- dfTukey_TreatSpec %>%
+  ggplot(aes(x = dependent_variable_names,
+             y = comparison, 
+             fill = Estimate)) +
+  geom_tile(color = "white",
+            lwd = 0.5,
+            linetype = 1) +
+  coord_fixed() +
+  facet_wrap(~species) +
+  geom_text(aes(label = paste(p.adj.signif, round(Estimate, digits = 3), sep = " ")), color = "white") +
+  scale_x_discrete(labels = c("Pigmentation (RGB)", expression(paste("Surface Area (c", m^3, ")", sep = "")), "Weight (g)")) +
+  scale_fill_stepsn(
+    name = "Estimate",
+    colors = cols_rocket
+  ) +
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank(), 
+        axis.line = element_blank(),
+        axis.text.x = element_text(angle = 45, 
+                                   hjust = 1, 
+                                   color = "black",
+                                   size = 9),
+        axis.text.y = element_text(color = "black", size = 9),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(), 
+        strip.background = element_rect(fill = "white"),
+        strip.text = element_text(face = "italic", size = 9),
+        legend.title = element_text(size = 9))
+  
+HeatMap_Tukey_TreatSpec_btwn
+
+#save plot 
+# ggsave("Figures/StatisticsResults/HeatMaps/HeatMap-TukeyTest-TreatmentSpecies-Between.png",
+#        plot = HeatMap_Tukey_TreatSpec_btwn,
+#        width = 8, height = 4)
+
+```
+
+### Treatment and Species: Within Groups
+Create a heatmap to plot within groups differences. The values shown in each cell are the differences between the response variable values for comparisons of the 3 Species, with each panel representing one Treatment. For example, the first row shows the difference in estimate between Pcli and Ofav for each of the response variables, which is then faceted by Treatment, so the first panel is Control. 
+#### Data Preparation 
+```{r heat-map-tukey-treatment-species-within-df}
+dfTukey_Treat_within <- dfTukey %>%
+  # get just Treatment:Species
+  filter(term == "Treatment:Species") %>%
+  # separate group1 and group2 columns into treatment and species
+  separate(col = group1, into = c("group1.treatment", "group1.species"), sep = ":") %>%
+  separate(col = group2, into = c("group2.treatment", "group2.species"), sep = ":") %>%
+  # change the names of the species to be better for the plots
+  mutate(group1.species = ifelse(group1.species == "Mcav", "M. cavernosa", group1.species),
+        group1.species = ifelse(group1.species == "Ofav", "O. faveolata", group1.species),
+        group1.species = ifelse(group1.species == "Pcli", "P. clivosa", group1.species)) %>%
+  mutate(group2.species = ifelse(group2.species == "Mcav", "M. cavernosa", group2.species),
+        group2.species = ifelse(group2.species == "Ofav", "O. faveolata", group2.species),
+        group2.species = ifelse(group2.species == "Pcli", "P. clivosa", group2.species))
+
+# subset to compare different species in same treatments
+# Control
+dfTukey_within_control <- dfTukey_Treat_within %>%
+  filter(group1.treatment == "Control" & group2.treatment == "Control")
+# PBR
+dfTukey_within_pbr <- dfTukey_Treat_within %>%
+  filter(group1.treatment == "PBR" & group2.treatment == "PBR")
+# PBC
+dfTukey_within_pbc <- dfTukey_Treat_within %>%
+  filter(group1.treatment == "PBC" & group2.treatment == "PBC")
+
+# combine all direct treatment comparisons
+dfTukey_Treat_within <- rbind(dfTukey_within_control, dfTukey_within_pbr, dfTukey_within_pbc) %>%
+  # use group1.treatment as treatment column to facet by in plot
+  mutate(treatment = group1.treatment) %>%
+  # make comparison column of species 1 vs species 2: estimate comes from group 2-group 1
+  mutate(comparison = paste(group2.species, "vs", group1.species, sep = " ")) %>%
+  rename(Estimate = estimate) %>%
+  mutate(p.adj.signif = ifelse(p.adj.signif == "ns", "", p.adj.signif))
+
+```
+
+#### Plot
+```{r heat-map-tukey-treatment-species-within-plot}
+# plot
+HeatMap_Tukey_Treat_within <- dfTukey_Treat_within %>%
+  ggplot(aes(x = dependent_variable_names,
+             y = comparison,
+             fill = Estimate)) +
+  geom_tile(color = "white",
+            lwd = 0.5,
+            linetype = 1) +
+  coord_fixed() +
+  facet_wrap(~treatment) +
+  geom_text(aes(label = paste(p.adj.signif, round(Estimate, digits = 4), sep = " ")), 
+            color = "white",
+            size = 3) +
+  scale_x_discrete(labels = c("Pigmentation (RGB)", expression(paste("Surface Area (c", m^3, ")", sep = "")), "Weight (g)")) +
+  scale_fill_stepsn(
+    name = "Estimate",
+    colors = cols_rocket
+  ) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_blank(),
+        axis.text.x = element_text(angle = 45, 
+                                   hjust = 1, 
+                                   color = "black",
+                                   size = 9),
+        axis.text.y = element_text(color = "black", face = "italic", size = 9),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.background = element_rect(fill = "white"),
+        strip.text = element_text(size = 9),
+        legend.title = element_text(size = 9))
+
+HeatMap_Tukey_Treat_within
+
+#save plot
+# ggsave("Figures/StatisticsResults/HeatMaps/HeatMap-TukeyTest-TreatmentSpecies-Within.png",
+#        plot = HeatMap_Tukey_Treat_within,
+#        width = 9, height = 4)
+
+```
+
+
+# Box Plots 
+## Tukey Results
+### Treatment and Species
+Create a boxplot of the differences between treatments for all response variables and faceted by species. This looks like 9 panels: 3 columns by 3 rows. Each column is a different species. Each row is a different response variable. All 3 treatments are shown in each panel. 
+```{r boxplot-all-vars-treat}
+# long format dfCoral
+dfCoral_long <- dfCoral %>%
+  pivot_longer(cols = 5:7,
+               names_to = "var_names", 
+               values_to = "var_vals") %>%
+  mutate(var_names = case_when(
+    var_names == "weight_g_weekly" ~ "Weight (g)",
+    var_names == "surface_area_cm3_weekly" ~ "Surface Area (cm^3)",
+    var_names == "rgb_weekly" ~ "Pigmentation (RGB)"
+  )) 
+
+# can't find a way to edit the superscript on surface area ylab, so will have to do that in post
+BoxPlot_all_treat_species <- 
+  ggplot(data = dfCoral_long,
+         aes(x = Treatment,
+             y = var_vals,
+             fill = Treatment)) +
+  geom_boxplot(outlier.alpha = 0.2) +
+  scale_fill_manual(values = cols_rocket_sm) +
+  facet_grid(rows = vars(var_names),
+             cols = vars(Species),
+             scales = "free",
+             switch = "y") +
+  geom_signif(comparisons=list(c("Control", "PBC"), 
+                               c("Control", "PBR"), 
+                               c("PBC", "PBR")),
+              map_signif_level = TRUE,
+              step_increase = 0.06,
+              tip_length = 0) +
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank(), 
+        axis.line = element_blank(),
+        axis.text.x = element_text(color = "black", size = 15),
+        axis.text.y = element_text(color = "black", size = 15),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.background = element_rect(fill = "white"),
+        strip.text.x = element_text(face = "italic", size = 15),
+        strip.text.y = element_text(size = 15),
+        strip.background.y = element_rect(size = 0),
+        strip.placement = "outside",
+        legend.text = element_text(size = 15), 
+        legend.title = element_text(size = 15))
+
+BoxPlot_all_treat_species
+
+# save plot 
+# ggsave("Figures/StatisticsResults/BoxPlots/BoxPlot-All-Treatment-Species.png",
+#       plot = BoxPlot_all_treat_species,
+#       height = 13, width = 9)
+
+```
+
+
+## Daily Light Integral (DLI) PAR Measurements 
+Create a boxplot for supplemental materials that shows the daily light integral for all days in each trial. This data is taken from the LiCor dataloggers, and the validity of the data cannot be totally verified unfortunately. Steady PAR measurements mentioned in paper are verified using the PARwise sensor. 
+```{r box-plot-dli}
+# dli per trial, color by treatment 
+boxplot_DLI <- dfEnvVar_long %>%
+  filter(variable_names == "DLI") %>%
+  filter(Trial != "Control") %>%
+  mutate(Trial = factor(Trial, levels = c("PBR 1", "PBC 1", "PBR 2", "PBC 2", "PBR 3", "PBC 3", "PBR 4"))) %>%
+  ggplot(aes(x = Trial,
+             y = variable_values,
+             fill = Treatment)) +
+  geom_boxplot() +
+  labs(y = expression(paste("Daily Light Integral (mol•",m^-2,"•",d^-1,")", sep = "")))+
+  scale_fill_manual(values = cols_rocket_sm[2:3]) +
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank(), 
+        panel.border = element_blank(),
+        axis.line.x.bottom = element_line(),
+        axis.line.y.left = element_line(),
+        axis.text.x = element_text(color = "black", size = 12),
+        axis.text.y = element_text(color = "black", size = 12),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 12),
+        legend.text = element_text(size = 12), 
+        legend.title = element_text(size = 12))
+
+boxplot_DLI
+
+# save plot 
+# ggsave("Figures/ConfoundingFactors/BoxPlot-DLI-Per-Trial.png",
+#        plot = boxplot_DLI,
+#        height = 4)
+
+```
+
+## PBC Trials: RGB
+Create a boxplot of RGB values for the PBC trials for the supplemental materials because all 3 trials were found to be significantly different from each other in the statistical testing. This figure shows where we conclude the differences come from: differences in RGB. 
+```{r box-plot-pbc-trials-rgb}
+boxplot_PBCTrials_RGB <- dfCoral_long %>%
+  filter(Treatment == "PBC" & var_names == "Pigmentation (RGB)") %>%
+  ggplot(aes(x = Trial,
+             y = var_vals, 
+             fill = Trial)) +
+  geom_boxplot() +
+  scale_fill_manual(values = cols_rocket) +
+  labs(y = "Pigmentation (RGB)") +
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank(), 
+        panel.border = element_blank(),
+        axis.line.x.bottom = element_line(),
+        axis.line.y.left = element_line(),
+        axis.text.x = element_text(color = "black", size = 12),
+        axis.text.y = element_text(color = "black", size = 12),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 12),
+        legend.text = element_text(size = 12), 
+        legend.title = element_text(size = 12))
+
+boxplot_PBCTrials_RGB
+
+# save plot 
+# ggsave("Figures/StatisticsResults/BoxPlots/BoxPlot-RGB-PBCTrials.png",
+#        plot = boxplot_PBCTrials_RGB)
+
+```
+
+# Tables
+## Confounding Factors 
+### Ranges: Stated
+Make a table of the range of each trial for all confounding factors. This will look like min - max for each variable. 
+```{r table-counfounding-factors-ranges-stated}
+# min - max
+dfConf_range <- dfEnvVar %>%
+  select(-`Nitrate HR`) %>%
+  mutate(Trial = factor(Trial, levels = c("PBR 1", "PBC 1", "PBR 2", "PBC 2", "PBR 3", "PBC 3", "Control"))) %>%
+  group_by(Trial) %>%
+  summarise(`Temperature (ºC)` = paste(round(min(`Temperature (ºC)`, 
+                                                 na.rm = T), digits = 2), 
+                                       round(max(`Temperature (ºC)`, 
+                                                 na.rm = T), digits = 2),
+                                       sep = " - "), 
+            `pH` = paste(round(min(pH, na.rm = T), digits = 2), 
+                       round(max(pH, na.rm = T), digits = 2),
+                       sep = " - "),
+            `Salinity (PSU)` = paste(round(min(`Salinity (PSU)`, 
+                                               na.rm = T), digits = 2), 
+                                     round(max(`Salinity (PSU)`, 
+                                               na.rm = T), digits = 2),
+                                     sep = " - "),
+            `ORP (mV)` = paste(round(min(`ORP (mV)`, na.rm = T), digits = 2), 
+                               round(max(`ORP (mV)`, na.rm = T), digits = 2),
+                               sep = " - "),
+            `Chlorophyll (RFU)` = paste(round(min(`Chlorophyll (RFU)`, 
+                                                  na.rm = T), digits = 2), 
+                                        round(max(`Chlorophyll (RFU)`, 
+                                                  na.rm = T), digits = 2),
+                                        sep = " - "),
+            `Phycoerythrin (RFU)` = paste(round(min(`Phycoerythrin (RFU)`, 
+                                                    na.rm = T), digits = 2), 
+                                          round(max(`Phycoerythrin (RFU)`, 
+                                                    na.rm = T), digits = 2),
+                                          sep = " - "),
+            `Alkalinity` = paste(round(min(`Alkalinity`, na.rm = T), digits = 2),
+                                 round(max(`Alkalinity`, na.rm = T), digits = 2),
+                                 sep = " - "),
+            `DLI` = paste(round(min(`DLI`, na.rm = T), digits = 2), 
+                          round(max(`DLI`, na.rm = T), digits = 2),
+                          sep = " - "),
+            `Ammonia` = paste(round(min(`Ammonia`, na.rm = T), digits = 2), 
+                              round(max(`Ammonia`, na.rm = T), digits = 2),
+                              sep = " - "),
+            `Calcium` = paste(round(min(`Calcium`, na.rm = T), digits = 2), 
+                              round(max(`Calcium`, na.rm = T), digits = 2),
+                              sep = " - "),
+            `Nitrate MR` = paste(round(min(`Nitrate MR`, na.rm = T), digits = 2),
+                                 round(max(`Nitrate MR`, na.rm = T), digits = 2),
+                                 sep = " - "),
+            `Phosphate` = paste(round(min(`Phosphate`, na.rm = T), digits = 2), 
+                                round(max(`Phosphate`, na.rm = T), digits = 2),
+                                sep = " - "),
+            `Silica` = paste(round(min(`Silica`, na.rm = T), digits = 2), 
+                             round(max(`Silica`, na.rm = T), digits = 2),
+                             sep = " - "),
+            `Iron` = paste(round(min(`Iron`, na.rm = T), digits = 2), 
+                           round(max(`Iron`, na.rm = T), digits = 2),
+                           sep = " - "),
+            `Turbidity` = paste(round(min(`Turbidity`, na.rm = T), digits = 2), 
+                                round(max(`Turbidity`, na.rm = T), digits = 2),
+                                sep = " - ")
+  ) %>%
+  mutate(Alkalinity = ifelse(Alkalinity == "Inf - -Inf", NA, Alkalinity),
+         DLI = ifelse(DLI == "Inf - -Inf", NA, DLI),
+         Silica = ifelse(Silica == "Inf - -Inf", NA, Silica),
+         Iron = ifelse(Iron == "Inf - -Inf", NA, Iron)) %>%
+  rename(`Alkalinity (mg/L)` = `Alkalinity`,
+         `Ammonia (mg/L)` = `Ammonia`, 
+         `Calcium (mg/L)` = `Calcium`, 
+         `Nitrate (mg/L)` = `Nitrate MR`, 
+         `Phosphate (mg/L)` = `Phosphate`,
+         `Silica (mg/L)` = `Silica`, 
+         `Iron (mg/L)` = `Iron`, 
+         `Turbidity (FAU)` = `Turbidity`)
+
+write_xlsx(dfConf_range, "Figures/ConfoundingFactors/ConfoundingFactors-Ranges-Stated.xlsx")
+ 
+```
+
+### Ranges: Difference
+Make a table of the range of each trial for all confounding factors. This will look like 'difference' (of min and max) for each variable. 
+```{r table-counfounding-factors-ranges-difference}
+# difference
+dfConf_range_diff <- dfEnvVar %>%
+  select(-`Nitrate HR`) %>%
+  mutate(Trial = factor(Trial, levels = c("PBR 1", "PBC 1", "PBR 2", "PBC 2", "PBR 3", "PBC 3", "Control"))) %>%
+  group_by(Trial) %>%
+  summarise(`Temperature (ºC)` = round(max(`Temperature (ºC)`, na.rm = T) - min(`Temperature (ºC)`, na.rm = T), digits = 2),
+            `pH` = round(max(`pH`, na.rm = T) - min(`pH`, na.rm = T), digits = 2),
+            `Salinity (PSU)` = round(max(`Salinity (PSU)`, na.rm = T) - min(`Salinity (PSU)`, na.rm = T), digits = 2),
+            `ORP (mV)` = round(max(`ORP (mV)`, na.rm = T) - min(`ORP (mV)`, na.rm = T), digits = 2),
+            `Chlorophyll (RFU)` = round(max(`Chlorophyll (RFU)`, na.rm = T) - min(`Chlorophyll (RFU)`, na.rm = T), digits = 2),
+            `Phycoerythrin (RFU)` = round(max(`Phycoerythrin (RFU)`, na.rm = T) - min(`Phycoerythrin (RFU)`, na.rm = T), digits = 2),
+            `Alkalinity` = round(max(`Alkalinity`, na.rm = T) - min(`Alkalinity`, na.rm = T), digits = 2),
+            `DLI` = round(max(`DLI`, na.rm = T) - min(`DLI`, na.rm = T), digits = 2),
+            `Ammonia` = round(max(`Ammonia`, na.rm = T) - min(`Ammonia`, na.rm = T), digits = 2),
+            `Calcium` = round(max(`Calcium`, na.rm = T) - min(`Calcium`, na.rm = T), digits = 2),
+            `Nitrate MR` = round(max(`Nitrate MR`, na.rm = T) - min(`Nitrate MR`, na.rm = T), digits = 2),
+            `Phosphate` = round(max(`Phosphate`, na.rm = T) - min(`Phosphate`, na.rm = T), digits = 2),
+            `Silica` = round(max(`Silica`, na.rm = T) - min(`Silica`, na.rm = T), digits = 2),
+            `Iron` = round(max(`Iron`, na.rm = T) - min(`Iron`, na.rm = T), digits = 2),
+            `Turbidity` = round(max(`Turbidity`, na.rm = T) - min(`Turbidity`, na.rm = T), digits = 2)
+  ) %>%
+  mutate(Alkalinity = ifelse(Alkalinity == "-Inf", NA, Alkalinity),
+         DLI = ifelse(DLI == "-Inf", NA, DLI),
+         Silica = ifelse(Silica == "-Inf", NA, Silica),
+         Iron = ifelse(Iron == "-Inf", NA, Iron)) %>%
+  rename(`Alkalinity (mg/L)` = `Alkalinity`,
+         `Ammonia (mg/L)` = `Ammonia`, 
+         `Calcium (mg/L)` = `Calcium`, 
+         `Nitrate (mg/L)` = `Nitrate MR`, 
+         `Phosphate (mg/L)` = `Phosphate`,
+         `Silica (mg/L)` = `Silica`, 
+         `Iron (mg/L)` = `Iron`, 
+         `Turbidity (FAU)` = `Turbidity`)
+
+write_xlsx(dfConf_range_diff, "Figures/ConfoundingFactors/ConfoundingFactors-Ranges-Difference.xlsx")
+
+```
+
+
+
+# References
+Hackerott et al. 2025: <https://doi.org/10.21203/rs.3.rs-5247850/v1>
+ColorBrewer: <https://colorbrewer2.org/#>

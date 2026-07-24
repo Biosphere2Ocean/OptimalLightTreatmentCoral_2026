@@ -1,0 +1,640 @@
+---
+title: "Mini Ocean Lighting Project Stats: PERMANOVA"
+collaborators: Savanna Saunders, Renee Grambihler
+project: Mini Ocean Light Data
+institution: Biosphere 2 Ocean
+description: "Uses non parametric statistics to analyze size, weight, and color changes or corals grown in Mini Ocean under different lighting treatments from Summer 2024 to Spring 2025 Coral Lighting Experiment"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+Input: 
+  `CoralColorWeightData_Rates.csv`: made as output in `MO-Wrangling-PERMANOVA.Rmd`, coral weight, surface area, and rgb (color) data as weekly rate of change per trial; one data point per coral per trial indicating the total change in response variable per trial
+  
+Output: 
+  `MOStats_PERMANOVA_SingleIndependent.xlsx`: results of running a single PERMANOVA with no interactions between the independent variables. 
+  
+  `MOStats_PERMANOVA_SingleInteraction.xlsx`: results of running a single PERMANOVA with interactions between the independent variables. 
+  
+  `MOStats_PERMANOVA_Pairwise_All.xlsx`: results of Pairwise PERMANOVA tests run on Trial, Treatment, and Species separately. 
+  
+  `MOStats_TukeyTestResults.xlsx`: results of Tukey Test run with interactions between the independent variables. 
+  
+
+## Import Libraries
+```{r import-libraries}
+library(tidyverse)
+library(readxl)
+library(openxlsx)
+library(rstatix)
+library(vegan)
+library(multcompView)
+library(pairwiseAdonis) 
+# to install pairwiseAdonis: in console run install.packages('devtools') > library(devtools) > install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
+options(scipen = 9999)
+# Do this to avoid a stupid useless error message
+options(dplyr.summarise.inform = FALSE)  
+```
+
+## Import Data
+```{r import-data}
+df_rates <- read_csv("InputData/Clean/CoralData/CoralColorWeightData_Rates.csv") %>%
+  # get rid of trial PBR 4 due to light timer malfunction keeping lights on continuously for 10 days
+  filter(Trial != "PBR 4")
+
+```
+
+# Quick Data Distribution Visualization
+## Trial
+```{r distribution-rate-data-histogram-trial}
+# Weight
+df_rates %>%
+  ggplot(aes(x = weight_g_weekly,
+             fill = Treatment,
+             color = Treatment)) +
+  facet_grid(rows = vars(Trial)) +
+  geom_histogram() +
+  # add dotted line at x = 0
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  ggtitle("Weekly Weight (g)") +
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+
+# Surface Area
+df_rates %>%
+  ggplot(aes(x = surface_area_cm3_weekly,
+             fill = Treatment,
+             color = Treatment)) +
+  facet_grid(rows = vars(Trial)) +
+  geom_histogram() +
+  # add dotted line at x = 0
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  ggtitle("Surface Area (cm^3)") +
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+
+# RGB
+df_rates %>%
+  ggplot(aes(x = rgb_weekly,
+             fill = Treatment,
+             color = Treatment)) +
+  facet_grid(rows = vars(Trial)) +
+  geom_histogram() +
+  # add dotted line at x = 0
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  ggtitle("Weekly Pigmentation (RGB Values)") +
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+
+```
+
+## Species and Trial
+```{r distribution-rate-data-histogram-species-trial}
+# Weight
+df_rates %>%
+  ggplot(aes(x = weight_g_weekly,
+             fill = Treatment,
+             color = Treatment)) +
+  facet_grid(rows = vars(Trial),
+             cols = vars(Species)) +
+  geom_histogram() +
+  # add dotted line at x = 0
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  ggtitle("Weekly Weight (g)") +
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+
+# surface area
+df_rates %>%
+  ggplot(aes(x = surface_area_cm3_weekly,
+             fill = Treatment,
+             color = Treatment)) +
+  facet_grid(rows = vars(Trial),
+             cols = vars(Species)) +
+  geom_histogram() +
+  # add dotted line at x = 0
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  ggtitle("Weekly Weight (g)") +
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+
+# rgb
+df_rates %>%
+  ggplot(aes(x = rgb_weekly,
+             fill = Treatment,
+             color = Treatment)) +
+  facet_grid(rows = vars(Trial),
+             cols = vars(Species)) +
+  geom_histogram() +
+  # add dotted line at x = 0
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  ggtitle("Weekly Weight (g)") +
+  scale_fill_manual(values = c("cyan3", "red2", "grey")) +
+  scale_color_manual(values = c("cyan4", "red3", "darkgrey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+
+
+```
+
+# PERMANOVAs
+Run non-parametric multivariate analysis of variance (NPMANOVA), also known as permutational multivariate analysis of variance (PERMANOVA), using weight, surface area, and RGB as dependent variables and Treatment and Species as independent/grouping/factor variables. The goal here is to see if there is a significant difference in the variance of the dependent variables as grouped by the independent variables. First we'll test Treatment, then Species, then Treatment and Species. 
+
+Note: we are using euclidean distance instead of curtis-bray distance due to having negative values in our dependent data. 
+
+We will also need to set the seed for the number generator used within the PERMANOVA function to ensure the same sequence of pseudo-random permutations is used each time we run the code, making our results reproducible - the specific number we choose for the seed is arbitrary. We will need to do this each time before we run a PERMANOVA.
+
+On the F Statistic: "When the F value is large, it indicates that the differences in group means are substantially greater than what could be expected due to random variation alone. Conversely, a small F value suggests that the observed differences in means are likely attributable to chance fluctuations within the groups." (<https://www.6sigma.us/six-sigma-in-focus/anova-f-value-meaning/>)
+
+## Single PERMANOVAs
+### Set-up
+Make a dataframe holding just the dependent variables.
+```{r permanova-setup}
+# from <https://f-santos.gitlab.io/2020-05-07-npmanova.html>
+y <- df_rates[, c("weight_g_weekly", "surface_area_cm3_weekly", "rgb_weekly")]
+
+```
+
+### Test Terms Independently 
+Test the effects of each factor variable on the dependent data independently of each other. 
+```{r permanova-independent-terms}
+# set seed for permutations so that they are reproducible 
+set.seed(100)
+
+# regress y on Trial, Species, Treatment
+perm_independent <- adonis2(y ~ df_rates$Species + df_rates$Treatment + df_rates$Trial, 
+                            method = "euclidean")
+
+# add column with row names that will print out nicely
+df_perm_independent <- perm_independent %>%
+  mutate(ModelNames = rownames(perm_independent), .before = Df)
+
+# make excel file of results
+#write.xlsx(x = df_perm_independent, file = "OutputData/StatisticsResults/MOStats_PERMANOVA_SingleIndependent.xlsx")
+
+```
+Species: 
+  - p = 0.002
+  - F = 5.964463
+  - R^2 = 0.04125117
+
+Treatment: 
+  - p = 0.001
+  - F = 8.024739
+  - R^2 = 0.05550036
+  
+Trial: 
+  - p = 0.001
+  - F = 11.549877
+  - R^2 = 0.15976153
+  
+Residual R^2 = 0.74348694
+
+There is a significant difference in dependent variable variance based on Treatment, Species, and Trial independently of each other. Run `view(perm_independent)` to see full table of results. 
+
+### Test Interaction Between Terms
+```{r permanova-interaction-terms}
+# set seed for permutations so that they are reproducible 
+set.seed(100)
+
+# regress y on Trial, Species, Treatment, Trial*Species, Trial*Treatment, Species*Treatment
+perm_interaction <- adonis2(y ~ df_rates$Species * df_rates$Treatment * df_rates$Trial, 
+                            method = "euclidean")
+
+# add column with row names that will print out nicely
+df_perm_interaction <- perm_interaction %>%
+  mutate(ModelNames = rownames(perm_interaction), .before = Df)
+
+# make excel file of results
+#write.xlsx(x = df_perm_interaction, file = "OutputData/StatisticsResults/MOStats_PERMANOVA_SingleInteraction.xlsx")
+
+```
+Species: 
+  - p = 0.001
+  - F = 7.082575
+  - R^2 = 0.04125117
+
+Treatment: 
+  - p = 0.001
+  - F = 9.529075
+  - R^2 = 0.05550036
+
+Trial: 
+  - p = 0.001
+  - F = 13.715042
+  - R^2 = 0.15976153
+
+Species & Treatment: 
+  - p = 0.026
+  - F = 2.763092
+  - R^2 = 0.03218625
+
+Species & Trial: 
+  - p = 0.001
+  - F = 5.156502
+  - R^2 = 0.12013243
+  
+Residual R^2 = 0.59116826
+
+There is a significant difference in dependent variable variance based on Treatment, Species, Trial, Treatment * Species, and Species * Trial. 
+
+NOTE: Treatment*Trial was automatically removed due to high multicollinearity, meaning that the variables are very highly correlated, which makes it difficult for the model to discern their individual impacts. Run `view(perm_interaction)` to see full table of results.
+
+## Pairwise PERMANOVAs
+Next we'll perform pairwise PERMANOVAs to see if there is a significant difference in the variance of the dependent variables as grouped by the specific levels of the independent variables. First we'll test Treatment, then Species, then Treatment and Species.
+
+### Setup
+```{r pairwise-permanova-setup-1}
+# R sometimes has trouble with assigning proper formats to variables so this sets it as a factor (the proper format)
+df_rates$Species <- as.factor(df_rates$Species)
+df_rates$Treatment <- as.factor(df_rates$Treatment)
+df_rates$Trial <- as.factor(df_rates$Trial)
+
+# then we'll use the same y dataframe from the regular permanova step
+y <- df_rates[, c("weight_g_weekly", "surface_area_cm3_weekly", "rgb_weekly")]
+```
+
+### Test Terms Independently
+#### Species
+```{r pairwise-permanova-independent-species}
+# set seed for permutations so that they are reproducible 
+set.seed(100)
+
+# Species model
+perm_pair_species <- pairwise.adonis2(y ~ Species, data = df_rates, method = "euclidean")
+
+# View Mcav vs Ofav
+perm_pair_species$Mcav_vs_Ofav
+# View Mcav vs Pcli
+perm_pair_species$Mcav_vs_Pcli
+# View Ofav vs Pcli
+perm_pair_species$Ofav_vs_Pcli
+
+# put results into dataframe 
+# list of comparisons
+comparisons_species <- names(perm_pair_species)[2:4] #element 1 is the parent call which we don't need
+# empty dataframe to put results in
+df_PermPairSpecies <- data.frame()
+
+
+for (i in 1:length(comparisons_species)) {
+  # set counter as i + 1 in order to avoid grabbing parent call info from perm_pair_trial (element)
+  counter <- i + 1
+  
+  # set comparison
+  comparison <- comparisons_species[i]
+  
+  # grab first row of comparison model stats
+  stats <- perm_pair_species[[counter]][1,]
+  
+  # combine comparison and stats into dataframe
+  perm <- cbind(comparison, stats)
+  
+  # add perm dataframe to df_PermPairTrial dataframe 
+  df_PermPairSpecies <- rbind(df_PermPairSpecies, perm)
+}
+
+# remove row names
+rownames(df_PermPairSpecies) <- NULL
+# rename p-value column
+df_PermPairSpecies <- rename(df_PermPairSpecies, p = `Pr(>F)`)
+# round numeric columns to 4 digits
+df_PermPairSpecies <- df_PermPairSpecies %>%
+  mutate(across(where(is.numeric), round, digits = 4)) %>%
+  add_column(term = "Species", .before = "comparison")
+
+```
+Mcav vs Ofav: 
+  - p = 0.002
+  - F = 7.8457
+  - R^2 = 0.05034
+  
+Mcav vs Pcli: 
+  - p = 0.578
+  - F = 0.3032
+  - R^2 = 0.00206
+  
+Ofav vs Pcli: 
+  - p = 0.007
+  - F = 6.759
+  - R^2 = 0.04396
+
+#### Treatment
+```{r pairwise-permanova-independent-treatment}
+# set seed for permutations so that they are reproducible 
+set.seed(100)
+
+# Treatment model 
+perm_pair_treatment <- pairwise.adonis2(y ~ Treatment, data = df_rates, method = "euclidean")
+
+# View PBR vs Control
+perm_pair_treatment$PBR_vs_Control
+# View Control vs PBC
+perm_pair_treatment$Control_vs_PBC
+# View PBR vs PBC
+perm_pair_treatment$PBR_vs_PBC
+
+# put results into dataframe 
+# list of comparisons
+comparisons_treatment <- names(perm_pair_treatment)[2:4] #element 1 is the parent call which we don't need
+# empty dataframe to put results in
+df_PermPairTreatment <- data.frame()
+
+
+for (i in 1:length(comparisons_treatment)) {
+  # set counter as i + 1 in order to avoid grabbing parent call info from perm_pair_trial (element)
+  counter <- i + 1
+  
+  # set comparison
+  comparison <- comparisons_treatment[i]
+  
+  # grab first row of comparison model stats
+  stats <- perm_pair_treatment[[counter]][1,]
+  
+  # combine comparison and stats into dataframe
+  perm <- cbind(comparison, stats)
+  
+  # add perm dataframe to df_PermPairTrial dataframe 
+  df_PermPairTreatment <- rbind(df_PermPairTreatment, perm)
+}
+
+# remove row names
+rownames(df_PermPairTreatment) <- NULL
+# rename p-value column
+df_PermPairTreatment <- rename(df_PermPairTreatment, p = `Pr(>F)`)
+# round numeric columns to 4 digits
+df_PermPairTreatment <- df_PermPairTreatment %>%
+  mutate(across(where(is.numeric), round, digits = 4))%>%
+  add_column(term = "Treatment", .before = "comparison")
+
+```
+PBR vs Control: 
+  - p = 0.01
+  - F = 7.483
+  - R^2 = 0.0504
+  
+PBC vs Control: 
+  - p = 0.003
+  - F = 11.09
+  - R^2 = 0.07244
+  
+PBR vs PBC: 
+  - p = 0.302
+  - F = 1.0887
+  - R^2 = 0.0068
+
+  
+#### Trial
+```{r pairwise-permanova-independent-trial}
+# set seed for permutations so that they are reproducible 
+set.seed(100)
+
+# Trial model 
+perm_pair_trial <- pairwise.adonis2(y ~ Trial, data = df_rates, method = "euclidean")
+
+# put results into dataframe 
+# list of comparisons
+comparisons_trial <- names(perm_pair_trial)[2:22] #element 1 is the parent call which we don't need
+# empty dataframe to put results in
+df_PermPairTrial <- data.frame()
+
+
+for (i in 1:length(comparisons_trial)) {
+  # set counter as i + 1 in order to avoid grabbing parent call info from perm_pair_trial (element)
+  counter <- i + 1
+  
+  # set comparison
+  comparison <- comparisons_trial[i]
+  
+  # grab first row of comparison model stats
+  stats <- perm_pair_trial[[counter]][1,]
+  
+  # combine comparison and stats into dataframe
+  perm <- cbind(comparison, stats)
+  
+  # add perm dataframe to df_PermPairTrial dataframe 
+  df_PermPairTrial <- rbind(df_PermPairTrial, perm)
+}
+
+# remove row names
+rownames(df_PermPairTrial) <- NULL
+# rename p-value column
+df_PermPairTrial <- rename(df_PermPairTrial, p = `Pr(>F)`)
+# round numeric columns to 4 digits
+df_PermPairTrial <- df_PermPairTrial %>%
+  mutate(across(where(is.numeric), round, digits = 4))%>%
+  add_column(term = "Trial", .before = "comparison")
+
+```
+Significant Results: 
+  *Control vs PBC*: 
+    Control_vs_PBC 3
+      - p = 0.001
+      - F = 39.8600
+      - R^2 = *0.3118*
+    
+    Control_vs_PBC 1
+      - p = 0.008
+      - F = 7.0570
+      - R^2 = 0.0742
+  
+  *Control vs PBR*: 
+    Control_vs_PBR 2
+      - p = 0.006
+      - F = 7.0970
+      - R^2 = 0.0754
+      
+  *PBR vs PBC*: 
+    PBR 1_vs_PBC 3
+      - p = 0.001
+      - F = 25.5700
+      - R^2 = *0.3296*
+      
+    PBR 3_vs_PBC 3
+      - p = 0.001
+      - F = 18.1600
+      - R^2 = 0.2588  
+      
+    PBC 2_vs_PBR 2
+      - p = 0.003
+      - F = 10.2400
+      - R^2 = 0.1672
+      
+    PBC 2_vs_PBR 2
+      - p = 0.003
+      - F = 10.2400
+      - R^2 = 0.1672
+      
+    PBR 2_vs_PBC 3
+      - p = 0.009
+      - F = 8.8360
+      - R^2 = 0.1477
+      
+    PBR 1_vs_PBC 2
+      - p = 0.017
+      - F = 6.6390
+      - R^2 = 0.1132
+    
+    PBC 2_vs_PBR 3
+      - p = 0.025
+      - F = 5.1780
+      - R^2 = 0.0906
+    
+  *PBR vs PBR*: 
+    None
+  
+  *PBC vs PBC*: 
+    *PBC 2_vs_PBC 3*
+      - p = 0.001
+      - F = 44.2900
+      - R^2 = *0.4600*
+      
+    PBC 1_vs_PBC 3
+      - p = 0.002
+      - F = 11.4000
+      - R^2 = 0.1799
+    
+    PBC 1_vs_PBC 2
+      - p = 0.003
+      - F = 11.2000
+      - R^2 = 0.1772
+
+#### All Pairwise PERMANOVA Results 
+```{r pairwise-permanova-results-all}
+# combine all pairwise permanova results into one data frame
+dfPairPermAll <- rbind(df_PermPairSpecies, df_PermPairTreatment, df_PermPairTrial)
+
+# write excel file of results
+# write.xlsx(x = dfPairPermAll, file = "OutputData/StatisticsResults/MOStats_PERMANOVA_Pairwise_All.xlsx")
+
+```
+
+# Post Hoc Tests: Tukey
+For each of the 3 response variables, we are going to run Tukey's Honest Significant Difference (Tukey HSD) test on all 3 independent variables and their significant interactions from the single PERMANOVAs: Species, Trial, Treatment, Species:Treatment, and Species:Trial. 
+
+## Data Set-Up
+```{r post-hoc-tukey-data-setup}
+# set up data frame for tukey testing 
+df_rates_long <- df_rates %>%
+  pivot_longer(cols = 5:7,
+               names_to = "dependent_variable_names",
+               values_to = "dependent_variable_values")
+
+```
+
+## Run Tukey Test
+```{r tukey-test-treatment-species}
+tukey_treat_tri_spec <- df_rates_long %>%
+  group_by(dependent_variable_names) %>%
+  tukey_hsd(dependent_variable_values ~ Treatment*Species*Trial) %>%
+  select(-null.value) %>%
+  mutate(across(where(is.numeric), round, digits = 4)) 
+
+# view results
+tukey_treat_tri_spec
+
+# make an excel file of results
+# write.xlsx(x = tukey_treat_tri_spec, file = "OutputData/StatisticsResults/MOStats_TukeyTestResults.xlsx")
+
+```
+
+## Degrees of Freedom
+### Weight
+```{r post-hoc-tukey-extra-stats}
+summary(aov(weight_g_weekly ~ Treatment * Species * Trial, data = df_rates))
+```
+The degrees of freedom for a Tukey HSD test are the df of the Residuals from the ANOVA test that the Tukey test is based on, so 203 in this case. 
+
+# Plots
+```{r plots}
+#### pbc by trial #### 
+# pbc 1 = june/july
+# pbc 2 = nov/dec
+# pbc 3 = feb/march
+
+# rgb 
+df_rates %>%
+  filter(Treatment == "PBC") %>%
+  ggplot(aes(y = rgb_weekly, 
+             color = Trial)) +
+  geom_boxplot()
+
+# weight 
+df_rates %>%
+  filter(Treatment == "PBC") %>%
+  ggplot(aes(y = weight_g_weekly, 
+             color = Trial)) +
+  geom_boxplot()
+
+# surface area  
+df_rates %>%
+  filter(Treatment == "PBC") %>%
+  ggplot(aes(y = surface_area_cm3_weekly, 
+             color = Trial)) +
+  geom_boxplot()
+
+# dfMultManovaTest_long_rgb <- dfMultManovaTest %>%
+#   pivot_longer(cols = rgb_mean:rgb_mean,
+#                names_to = "dependent_variables",
+#                values_to = "values")
+#   
+#   dfMultManovaTest_long_rgb %>%
+#   ggplot(aes(x = time,
+#              y = values, 
+#              fill = dependent_variables)) +
+#   geom_boxplot() +
+#   facet_wrap(~treatment) +
+#   theme(panel.grid = element_blank())
+#   
+#   
+#   par_summaryall <- parFrame_all %>%
+#   group_by(Treatment) %>%
+#   mutate(Treatment = factor(Treatment, levels = c("PBR-1", "PBC-1", "PBR-2", "PBC-2", "PBR-3", "PBC-3", "PBR-4"))) %>%
+#   summarise(mean_par = mean(PAR, na.rm = TRUE),
+#             sd_par = sd(PAR, na.rm = TRUE), #standard deviation
+#             n = n(),
+#             se_par = sd_par / sqrt(n)) #standard error
+# 
+# ggplot(par_summaryall, aes(x = Treatment, y = mean_par, fill = Treatment)) +
+#   geom_boxplot() +
+#   geom_errorbar(aes(ymin = mean_par - se_par, ymax = mean_par + se_par), width = 0.2) +
+#   ylim(0, NA)+
+#   labs(title = "Mean PAR by Treatment",
+#        x = "Treatment",
+#        y = "Mean PAR") +
+#   theme_minimal()
+```
+
+
+# References
+PERMANOVAs: 
+ - <https://f-santos.gitlab.io/2020-05-07-npmanova.html>
+ - <https://www.6sigma.us/six-sigma-in-focus/anova-f-value-meaning/>
+Formulas used in PERMANOVAs: 
+  - <https://www.econometrics.blog/post/the-r-formula-cheatsheet/>
+Tukey Test: 
+  - Abdi, H. and Williams, L.J. (2010) Turkey’s Honestly Significant Difference (HSD) test. Encyclopedia of Research Design. Sage, Thousand Oaks, 1-5.

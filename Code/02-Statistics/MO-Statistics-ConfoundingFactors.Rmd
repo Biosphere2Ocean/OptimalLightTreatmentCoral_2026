@@ -1,0 +1,1460 @@
+---
+title: "Mini Ocean Lighting Project Stats: Confounding Factors"
+collaborators: Savanna Saunders, Renee Grambihler
+project: Mini Ocean Light Data
+institution: Biosphere 2 Ocean
+description: "Uses a generalized linear model to analyze how size, weight, and color changes in corals grown in Mini Ocean under different lighting treatments from the Summer 2024 to Spring 2025 Coral Lighting Experiment were affected by environmental factors"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+**Input**: 
+  `CoralColorWeightData_Rates.csv`: spreadsheet of coral data with Before and After values subtracted from each other and then divided either by 3 or 6 depending on what Trial the data is from in order to get a weekly rate of change.
+  
+  `All-Environmental-Variables-Wide.xlsx`: spreadsheet of all environmental data (nutrients, water quality, DLI) from MO and R2 during all trials in wide format
+  
+  `All-Environmental-Variables-Long.xlsx`: spreadsheet of all environmental data (nutrients, water quality, DLI) from MO and R2 during all trials in long format
+
+**Output**: 
+  `ConfoundingFactorTesting-KruskalWallis-InitialResults.xlsx`: spreadsheet of significant Kruskal Wallis results testing if environmental variables differ between trials 
+  
+  `ConfoundingFactorTesting-KruskalWallis-EffectSize.xlsx`: spreadsheet of the effect size of the significant Kruskal Wallis results 
+  
+  `ConfoundingFactorTesting-Dunn.xlsx`: spreadsheet of Dunn Test results showing comparisons between all trials for environmental variables 
+  
+  `ConfoundingFactorTesting-LinearRegressions.xlsx`: spreadsheet of regular linear regression results testing if the environmental variables affected the trial outcomes
+  
+  `ConfoundingFactorTesting-WeightedLeastSquareRegressions.xlsx`: spreadsheet of weighted least squares linear regression results testing if the environmental variables affected the trial outcomes 
+
+
+## Import Libraries
+```{r import-libraries}
+library(tidyverse)
+library(readxl)
+library(writexl)
+library(rstatix)
+library(lubridate)
+library(lmtest)
+library(modelr)
+library(ggpubr)
+# get rid of scientific notation
+options(scipen = 9999)
+# avoid dplyr error message
+options(dplyr.summarise.inform = FALSE)  
+```
+
+# Import Data
+Import Coral Data and Environmental Data: nutrients, water quality, DLI. 
+```{r import-data}
+# coral data
+# rate of change per week
+dfCoral_rates <- read_csv("InputData/Clean/CoralData/CoralColorWeightData_Rates.csv") %>%
+  filter(Trial != "PBR 4") # take out PBR 4 because it isn't in the environemntal data files
+
+# environmental data
+# wide version
+dfAllEnvVar <- read_excel("InputData/Clean/EnvironmentalData/All-Environmental-Variables-Wide.xlsx") %>%
+  #remove nitrate HR since nitrate MR is scaled more for smaller values
+  select(-`Nitrate HR`) %>%
+  # remove weird temp outlier
+  filter(`Temperature (ºC)` > 0)
+
+# long version
+dfAllEnvVar_long <- read_excel("InputData/Clean/EnvironmentalData/All-Environmental-Variables-Long.xlsx") %>%
+  #remove nitrate HR since nitrate MR is scaled more for smaller values
+  filter(variable_names != "Nitrate HR") %>%
+  # remove weird temp outlier 
+  mutate(variable_values = ifelse(variable_names == "Temperature (ºC)" & variable_values < 0, NA, variable_values))
+
+```
+
+# Preliminary Plotting
+Just want to get an idea of the general layout of the data by Trial.  
+## Coral 
+```{r data-wrangling-coral-boxplots}
+# boxplots
+var_names_coral <- colnames(dfCoral_rates)[5:7]
+plotList_coral <- list()
+
+for (i in 1:length(var_names_coral)){
+  plotList_coral[[i]] <- dfCoral_rates %>%
+    mutate(Trial = factor(Trial, levels = c("PBR 1", "PBC 1", "PBR 2", "PBR 3", "PBC 2", "PBR 4", "PBC 3", "Control"))) %>%
+    pivot_longer(cols = 5:7,
+                 names_to = "variable_name",
+                 values_to = "variable_value") %>%
+    filter(variable_name == var_names_coral[i]) %>%
+    ggplot(aes(x = Trial,
+               y = variable_value,
+               fill = Treatment)) +
+    geom_boxplot() +
+    ylab(var_names_coral[i]) +
+    theme_bw() + 
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          panel.background = element_blank())+
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          plot.margin = margin(0.25, 0.45, 0.25, 0.25, "inch"))+
+    theme(strip.background = element_rect(fill = "white"))
+  
+  print(plotList_coral[[i]])
+}
+
+```
+
+## Environmental Variables
+```{r data-wrangling-env-vars-boxplots}
+# boxplots
+var_names_env <- unique(dfAllEnvVar_long$variable_names)
+plotList_env_var <- list()
+
+for (i in 1:length(var_names_env)){
+  plotList_env_var[[i]] <- dfAllEnvVar_long %>%
+    filter(variable_names == var_names_env[i]) %>%
+    mutate(Trial = factor(Trial, levels = c("PBR 1", "PBC 1", "PBR 2", "PBR 3", "PBC 2", "PBR 4", "PBC 3", "Control"))) %>%
+    ggplot(aes(x = Trial,
+               y = variable_values,
+               fill = Treatment)) +
+    geom_boxplot() +
+    ylab(var_names_env[i]) +
+    # scale_x_date(date_breaks = "1 month",
+    #              date_labels = "%b %Y") +
+    theme_bw() + 
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          panel.background = element_blank())+
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          plot.margin = margin(0.25, 0.45, 0.25, 0.25, "inch"))+
+    theme(strip.background = element_rect(fill = "white"))
+  
+  print(plotList_env_var[[i]])
+}
+
+```
+
+# Confounding Factor Testing
+## Do the environmental factors vary significantly between trials? 
+### Kruskal-Wallis
+```{r env-fact-vary-trial-all-kruskal}
+# kruskal-wallis test to see which variables are significantly different by trial
+kruskal_all <- dfAllEnvVar_long %>%
+  group_by(variable_names) %>%
+  kruskal_test(variable_values ~ Trial)%>%
+  filter(p < 0.05) %>%
+  mutate(p = round(p, digits = 4))
+# make excel file of results
+#write_xlsx(kruskal_all, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-KruskalWallis-InitialResults.xlsx")
+
+# kruskal-wallis effect size to see how large the effect size is for each variable 
+kruskal_all_effsize <- dfAllEnvVar_long %>%
+  group_by(variable_names) %>%
+  kruskal_effsize(variable_values ~ Trial) %>%
+  mutate(effsize = round(effsize, 2))
+# make excel file of results
+#write_xlsx(kruskal_all_effsize, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-KruskalWallis-EffectSize.xlsx")
+
+```
+
+Significant p-value from Kruskal-Wallis test: 
+- Alkalinity
+- Ammonia
+- Calcium
+- Chlorophyll 
+- DLI 
+- ORP
+- pH
+- Phycoerytherin
+- Salinity 
+- Temperature
+
+Effect size of significant variables based on Kruskal-Wallis test: 
+- Alkalinity: 0.05 = Small
+- Ammonia: 0.02 = Small
+- Calcium: 0.06 = Moderate
+- Chlorophyll: 0.20 = **Large**
+- DLI: 0.02 = Small
+- ORP: 0.15 = **Large**
+- pH: 0.59 = **Large**
+- Phycoerytherin: 0.29 = **Large**
+- Salinity: 0.42 = **Large**
+- Temperature: 0.39 = **Large**
+
+3% of variance in Alkalinity is explained by Trial. 
+2% of variance in Ammonia is explained by Trial.
+6% of variance in Calcium is explained by Trial. 
+20% of variance in Chlorophyll is explained by Trial.
+12% of variance in DLI is explained by Trial.
+16% of variance in ORP is explained by Trial.
+59% of variance in pH is explained by Trial.
+29% of variance in Phycoerytherin is explained by Trial.
+42% of variance in Salinity is explained by Trial.
+39% of variance in Temperature is explained by Trial.
+
+### Dunn's Test of Multiple Comparisons
+```{r env-fact-vary-trial-all-dunn}
+# dunn test for nonparametric pairwise multiple comparisons of ranked data
+dunn_all <- dfAllEnvVar_long %>%
+  group_by(variable_names) %>%
+  dunn_test(variable_values ~ Trial, p.adjust.method = "bonferroni", detailed = TRUE) %>%
+  select(-p, -method) %>%
+  mutate(p.adj = round(p.adj, 4))
+
+# make excel file of results
+# write_xlsx(dunn_all, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-Dunn.xlsx")
+
+```
+
+Significant variables from Dunn test: 
+- Alkalinity
+- Ammonia
+- Calcium
+- Chlorophyll
+- ORP
+- pH
+- Phycoerytherin
+- Salinity 
+- Temperature
+
+See ConfoundingFactorTesting-Dunn.xlsx for details (estimates are mean ranks difference rather than difference in means/medians)
+
+## Do the environmental variables influence the response variables? 
+### Data Setup
+Since the environmental data is a time series, but the coral data isn't, and we want to compare them directly, we'll take the mean of the environmental data for each trial but leave the coral data alone. This will give us a dataframe that looks like different values for the coral data with the same environmental value for each coral data point for each trial. `View(dfCoralRateAllEnvMean)` to see what that looks like. 
+```{r env-fact-infl-data-setup}
+# mean environmental variable per trial
+dfAllEnvVar_mean <- dfAllEnvVar %>%
+  group_by(Treatment, Trial) %>%
+  summarise(across(where(is.numeric), ~ mean(.x, na.rm = TRUE)))
+
+# combine with coral data 
+dfCoralRateAllEnvMean <- dfCoral_rates %>%
+  left_join(dfAllEnvVar_mean) %>%
+  mutate(Trial = factor(Trial, levels = c("PBR 1", "PBC 1", "PBR 2", "PBR 3", "PBC 2", "PBC 3", "Control")))
+
+```
+
+### Linear Models
+#### Regular Linear Regression
+##### Define Functions
+Make functions for linear models using dependent variables and grouped by environmental variable 
+```{r lm-functions}
+# subracted
+# weight
+func_lm_weight <- function(df) {
+  lm(weight_g_weekly ~ var_values, data = df)
+}
+
+# surface area
+func_lm_surface_area <- function(df) {
+  lm(surface_area_cm3_weekly ~ var_values, data = df)
+}
+# rgb
+func_lm_rgb <- function(df) {
+  lm(rgb_weekly ~ var_values, data = df)
+}
+
+```
+
+##### Regressions
+```{r lm-regressions}
+# make nested list of pivoted dataframes. nested by dependent variable
+lm_data_list <- dfCoralRateAllEnvMean %>%
+  pivot_longer(cols = 8:22,
+               names_to = "var_names",
+               values_to = "var_values") %>%
+  group_by(var_names) %>%
+  nest()
+
+# apply lm functions to their respective variable in the nested list
+lm_data_list <- lm_data_list %>%
+  mutate(lm_weight = map(data, func_lm_weight),
+         lm_surface_area = map(data, func_lm_surface_area),
+         lm_rgb = map(data, func_lm_rgb))
+
+# Grab Results
+#### weight ####
+# empty list to put lm weight results in
+lm_results_weight <- data.frame(environmental_variable = lm_data_list$var_names,
+                                p_value = NA,
+                                f_stat = NA,
+                                r_squared = NA, 
+                                estimate = NA)
+# loop through length of lm_results_weight and grab p-value, f statistic, and r^2 value for each model from lm_data_list 
+for (i in 1:length(lm_data_list$var_names)) {
+  # p value for i 
+  lm_results_weight$p_value[i] <- summary(lm_data_list$lm_weight[[i]])$coefficients[2,4]
+  # f stat for i 
+  lm_results_weight$f_stat[i] <- summary(lm_data_list$lm_weight[[i]])$fstatistic[1]
+  # r^2 for i
+  lm_results_weight$r_squared[i] <- summary(lm_data_list$lm_weight[[i]])$r.squared
+  # estimate for i
+  lm_results_weight$estimate[i] <- summary(lm_data_list$lm_weight[[i]])$coefficients[2]
+}
+# round values to 4th decimal place 
+lm_results_weight <- lm_results_weight %>%
+  mutate(across(where(is.numeric), ~round(.x, digits = 4)))
+
+#### surface area ####
+# empty list to put lm surface area results in
+lm_results_surface_area <- data.frame(environmental_variable = lm_data_list$var_names,
+                                      p_value = NA,
+                                      f_stat = NA,
+                                      r_squared = NA,
+                                      estimate = NA)
+# loop through length of lm_results_surface_area and grab p-value, f statistic, and r^2 value for each model from lm_data_list 
+for (i in 1:length(lm_data_list$var_names)) {
+  # p value for i 
+  lm_results_surface_area$p_value[i] <- summary(lm_data_list$lm_surface_area[[i]])$coefficients[2,4]
+  # f stat for i 
+  lm_results_surface_area$f_stat[i] <- summary(lm_data_list$lm_surface_area[[i]])$fstatistic[1]
+  # r^2 for i
+  lm_results_surface_area$r_squared[i] <- summary(lm_data_list$lm_surface_area[[i]])$r.squared
+  # estimate for i
+  lm_results_surface_area$estimate[i] <- summary(lm_data_list$lm_surface_area[[i]])$coefficients[2]
+}
+# round values to 4th decimal place 
+lm_results_surface_area <- lm_results_surface_area %>%
+  mutate(across(where(is.numeric), ~round(.x, digits = 4)))
+
+#### rgb ####
+# empty list to put lm rgb results in
+lm_results_rgb <- data.frame(environmental_variable = lm_data_list$var_names,
+                             p_value = NA,
+                             f_stat = NA,
+                             r_squared = NA,
+                             estimate = NA)
+# loop through length of lm_results_rgb and grab p-value, f statistic, and r^2 value for each model from lm_data_list 
+for (i in 1:length(lm_data_list$var_names)) {
+  # p value for i 
+  lm_results_rgb$p_value[i] <- summary(lm_data_list$lm_rgb[[i]])$coefficients[2,4]
+  # f stat for i 
+  lm_results_rgb$f_stat[i] <- summary(lm_data_list$lm_rgb[[i]])$fstatistic[1]
+  # r^2 for i
+  lm_results_rgb$r_squared[i] <- summary(lm_data_list$lm_rgb[[i]])$r.squared
+  # estimate for i
+  lm_results_rgb$estimate[i] <- summary(lm_data_list$lm_rgb[[i]])$coefficients[2]
+}
+# round values to 4th decimal place 
+lm_results_rgb <- lm_results_rgb %>%
+  mutate(across(where(is.numeric), ~round(.x, digits = 4)))
+
+#### export results ####
+# prep lm dataframes to combine
+# weight
+lm_results_weight <- lm_results_weight %>%
+  add_column(dependent_variable = "weight_g_weekly", 
+             .before = "environmental_variable") 
+# surface area
+lm_results_surface_area <- lm_results_surface_area %>%
+  add_column(dependent_variable = "surface_area_cm3_weekly",
+             .before = "environmental_variable")
+# rgb
+lm_results_rgb <- lm_results_rgb %>%
+  add_column(dependent_variable = "rgb_weekly",
+             .before = "environmental_variable")
+# combine dataframes
+lm_results_all <- rbind(lm_results_weight, lm_results_surface_area, lm_results_rgb) %>%
+  filter(p_value < 0.05)
+# write excel file
+# write_xlsx(lm_results_all, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-LinearRegressions.xlsx")
+
+```
+Significant Results: 
+Weight: 
+- Temperature
+- pH
+- ORP
+- Phycoerythrin
+- Nitrate MR: r^2 = 0.15
+- Silica: r^2 = 0.16
+- Iron: r^2 = 0.11
+- Calcium
+Surface area: 
+- Temperature
+- pH
+- Nitrate MR
+- Silica
+RGB: 
+- Temperature
+- Salinity 
+- pH
+- Silica
+- Iron
+- Calcium
+
+Quite a few variables have a significant linear relationship with weight, but none of them have a higher r^2 than 0.20, meaning that the relationships are fairly weak. 
+
+#### Weighted Least Squares Regression
+This is a form of linear regression that places more weight on the observations with smaller error variance. To see which variables require this test, we will first run a Breusch-Pagan test to see if there is homoscedasticity in the residuals. If the test has a p-value < 0.05, then there is homoscedasticity. If homoscedasticity is present, then we will run the weighted least squares regression. Otherwise, the unweighted linear regression is fine. 
+Source: https://www.statology.org/weighted-least-squares-in-r/
+##### Define Functions
+```{r wls-functions}
+# make functions for weighted least squares linear models using dependent vars
+# weight
+func_wls_weight <- function(df) {
+  lm(formula = weight_g_weekly ~ var_values, data = df, 
+     weights = 1/lm(abs(resid) ~ pred)$fitted.values^2)
+}
+
+# surface area
+func_wls_surface_area <- function(df) {
+  lm(formula = surface_area_cm3_weekly ~ var_values, data = df, 
+     weights = 1/lm(abs(resid) ~ pred)$fitted.values^2)
+}
+# rgb
+func_wls_rgb <- function(df) {
+  lm(formula = rgb_weekly ~ var_values, data = df, 
+     weights = 1/lm(abs(resid) ~ pred)$fitted.values^2)
+}
+
+```
+
+##### Prepare Data
+```{r wls-data-prep}
+# add residuals for each model 
+lm_data_list <- lm_data_list %>%
+  mutate(resids_weight = map2(data, lm_weight, add_residuals),
+         resids_surface_area = map2(data, lm_surface_area, add_residuals),
+         resids_rgb = map2(data, lm_rgb, add_residuals),
+         fit_vals_weight = map2(data, lm_weight, add_predictions),
+         fit_vals_surface_area = map2(data, lm_surface_area, add_predictions),
+         fit_vals_rgb = map2(data, lm_rgb, add_predictions))
+
+# unnest and separate into dataframes based on dependent variable then re-nest by environmental variable to prep for WLS regressions in next step
+# weight
+lm_resids_weight <- unnest(lm_data_list, resids_weight, fit_vals_weight) %>%
+  select(var_names, weight_g_weekly, var_values, resid, pred) %>%
+  na.omit() %>%
+  group_by(var_names) %>%
+  nest()
+
+# surface area
+lm_resids_surface_area <- unnest(lm_data_list, resids_surface_area, fit_vals_surface_area) %>%
+  select(var_names, surface_area_cm3_weekly, var_values, resid, pred) %>%
+  na.omit() %>%
+  group_by(var_names) %>%
+  nest()
+
+# rgb
+lm_resids_rgb <- unnest(lm_data_list, resids_rgb, fit_vals_rgb) %>%
+  select(var_names, rgb_weekly, var_values, resid, pred) %>%
+  na.omit() %>%
+  group_by(var_names) %>%
+  nest()
+
+```
+
+
+##### Regressions
+Perform wls regressions for each environmental variable in each dependent variable and output results: estimate, degrees of freedom (df), residual degrees of freedom (rdf), standard error (se), residual standard error (rse), F statistic (f_stat), r^2, p-value.
+```{r wls}
+#### weight ####
+wls_list_weight <- lm_resids_weight %>%
+  mutate(wls = map(data, func_wls_weight))
+
+# empty list to put wls weight results in
+wls_results_weight <- data.frame(environmental_variable = wls_list_weight$var_names,
+                                 estimate = NA,
+                                 df = NA,
+                                 rdf = NA,
+                                 se = NA,
+                                 rse = NA,
+                                 f_stat = NA,
+                                 r_squared = NA,
+                                 p_value = NA
+                                 )
+# loop through length of wls_results_weight and grab p-value, f statistic, and r^2 value for each model from wls_list_weight 
+for (i in 1:length(wls_list_weight$var_names)) {
+  # estimate for i
+  wls_results_weight$estimate[i] <- summary(wls_list_weight$wls[[i]])$coefficients[2]
+  # degrees of freedom for i
+  wls_results_weight$df[i] <- summary(wls_list_weight$wls[[i]])$df[1]
+  # residual degrees of freedom for i 
+  wls_results_weight$rdf[i] <- summary(wls_list_weight$wls[[i]])$df[2]
+  # standard error for i
+  wls_results_weight$se[i] <-summary(wls_list_weight$wls[[i]])$coefficients[2, "Std. Error"]
+  # residual standard error for i
+  wls_results_weight$rse[i] <-summary(wls_list_weight$wls[[i]])$sigma
+  # f stat for i 
+  wls_results_weight$f_stat[i] <- summary(wls_list_weight$wls[[i]])$fstatistic[1]
+  # r^2 for i
+  wls_results_weight$r_squared[i] <- summary(wls_list_weight$wls[[i]])$r.squared
+  # p value for i 
+  wls_results_weight$p_value[i] <- summary(wls_list_weight$wls[[i]])$coefficients[2,4]
+}
+# round values to 4th decimal place 
+wls_results_weight <- wls_results_weight %>%
+  mutate(across(where(is.numeric), ~round(.x, digits = 4)))
+
+
+#### surface area ####
+wls_list_surface_area <- lm_resids_surface_area %>%
+  mutate(wls = map(data, func_wls_surface_area))
+
+# empty list to put wls weight results in
+wls_results_surface_area <- data.frame(environmental_variable = wls_list_surface_area$var_names,
+                                       estimate = NA,
+                                       df = NA,
+                                       rdf = NA,
+                                       se = NA,
+                                       rse = NA,
+                                       f_stat = NA,
+                                       r_squared = NA,
+                                       p_value = NA)
+# loop through length of wls_results_surface_area and grab p-value, f statistic, and r^2 value for each model from wls_list_surface_area 
+for (i in 1:length(wls_list_surface_area$var_names)) {
+  # estimate for i
+  wls_results_surface_area$estimate[i] <- summary(wls_list_surface_area$wls[[i]])$coefficients[2]
+  # degrees of freedom for i
+  wls_results_surface_area$df[i] <- summary(wls_list_surface_area$wls[[i]])$df[1]
+  # residual degrees of freedom for i 
+  wls_results_surface_area$rdf[i] <- summary(wls_list_surface_area$wls[[i]])$df[2]
+  # standard error for i
+  wls_results_surface_area$se[i] <-summary(wls_list_surface_area$wls[[i]])$coefficients[2, "Std. Error"]
+  # residual standard error for i
+  wls_results_surface_area$rse[i] <-summary(wls_list_surface_area$wls[[i]])$sigma
+  # f stat for i 
+  wls_results_surface_area$f_stat[i] <- summary(wls_list_surface_area$wls[[i]])$fstatistic[1]
+  # r^2 for i
+  wls_results_surface_area$r_squared[i] <- summary(wls_list_surface_area$wls[[i]])$r.squared
+  # p value for i 
+  wls_results_surface_area$p_value[i] <- summary(wls_list_surface_area$wls[[i]])$coefficients[2,4]
+}
+# round values to 4th decimal place 
+wls_results_surface_area <- wls_results_surface_area %>%
+  mutate(across(where(is.numeric), ~round(.x, digits = 4)))
+
+
+#### rgb ####
+wls_list_rgb <- lm_resids_rgb %>%
+  mutate(wls = map(data, func_wls_rgb))
+
+# empty list to put wls weight results in
+wls_results_rgb <- data.frame(environmental_variable = wls_list_rgb$var_names,
+                              estimate = NA,
+                              df = NA,
+                              rdf = NA,
+                              se = NA,
+                              rse = NA,
+                              f_stat = NA,
+                              r_squared = NA,
+                              p_value = NA)
+# loop through length of wls_results_rgb and grab p-value, f statistic, and r^2 value for each model from wls_list_rgb 
+for (i in 1:length(wls_list_rgb$var_names)) {
+  # estimate for i
+  wls_results_rgb$estimate[i] <- summary(wls_list_rgb$wls[[i]])$coefficients[2]
+  # degrees of freedom for i
+  wls_results_rgb$df[i] <- summary(wls_list_rgb$wls[[i]])$df[1]
+  # residual degrees of freedom for i 
+  wls_results_rgb$rdf[i] <- summary(wls_list_rgb$wls[[i]])$df[2]
+  # standard error for i
+  wls_results_rgb$se[i] <-summary(wls_list_rgb$wls[[i]])$coefficients[2, "Std. Error"]
+  # residual standard error for i
+  wls_results_rgb$rse[i] <-summary(wls_list_rgb$wls[[i]])$sigma
+  # f stat for i 
+  wls_results_rgb$f_stat[i] <- summary(wls_list_rgb$wls[[i]])$fstatistic[1]
+  # r^2 for i
+  wls_results_rgb$r_squared[i] <- summary(wls_list_rgb$wls[[i]])$r.squared
+  # p value for i 
+  wls_results_rgb$p_value[i] <- summary(wls_list_rgb$wls[[i]])$coefficients[2,4]
+}
+# round values to 4th decimal place 
+wls_results_rgb <- wls_results_rgb %>%
+  mutate(across(where(is.numeric), ~round(.x, digits = 4)))
+
+#### Export Results ####
+# prep lm dataframes to combine
+# weight
+wls_results_weight <- wls_results_weight %>%
+  add_column(dependent_variable = "weight_g_weekly", 
+             .before = "environmental_variable") 
+# surface area
+wls_results_surface_area <- wls_results_surface_area %>%
+  add_column(dependent_variable = "surface_area_cm3_weekly",
+             .before = "environmental_variable")
+# rgb
+wls_results_rgb <- wls_results_rgb %>%
+  add_column(dependent_variable = "rgb_weekly",
+             .before = "environmental_variable")
+# combine dataframes
+wls_results_all <- rbind(wls_results_weight, wls_results_surface_area, wls_results_rgb) %>%
+  filter(p_value < 0.05)
+
+# write excel file
+# write_xlsx(wls_results_all, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-WeightedLeastSquareRegressions.xlsx")
+
+
+```
+Significant Results: 
+Weight: 
+- Temperature
+- pH
+- ORP
+- Phycoerytherin 
+- Nitrate MR: r^2 = 0.18
+- Silica: r^2 = 0.18
+- Iron
+- Calcium 
+Surface Area: r^2 all 0.10 or less 
+- Temperature
+- Nitrate 
+- Alkalinity 
+- Silica
+- Ammonia
+RGB: r^2 all 0.10 or less 
+- Temperature
+- Salinity 
+- pH
+- Silica
+- Iron
+- Calcium
+
+Quite a few variables have a significant linear relationship with weight, but none of them have a higher r^2 than 0.20, meaning that the relationships are fairly weak. 
+
+#### Summary of Linear and Weighted Least Squares Regression Models
+Quite a few variables have a significant linear relationship with weight, but none of them have a higher r^2 than 0.20, meaning that the relationships are fairly weak. 
+
+# Plots
+## Weight 
+### Scatter Plots
+#### Significant
+```{r plots-weight}
+# temperature 
+scatter_weight_temp <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Temperature (ºC)`,
+             y = weight_g_weekly, 
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (weight_g_weekly - sd(weight_g_weekly, na.rm = TRUE)),
+                    ymax = (weight_g_weekly + sd(weight_g_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean Temperature (ºC) Per Trial") +
+  ylab("Weight (g)") +
+  xlab("Temperature (ºC)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_weight_temp
+
+# pH
+scatter_weight_ph <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = pH,
+             y = weight_g_weekly, 
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (weight_g_weekly - sd(weight_g_weekly, na.rm = TRUE)),
+                    ymax = (weight_g_weekly + sd(weight_g_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean pH Per Trial") +
+  ylab("Weight (g)") +
+  xlab("pH") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_weight_ph
+
+# ORP
+scatter_weight_orp <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `ORP (mV)`,
+             y = weight_g_weekly, 
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (weight_g_weekly - sd(weight_g_weekly, na.rm = TRUE)),
+                    ymax = (weight_g_weekly + sd(weight_g_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean ORP (mV) Per Trial") +
+  ylab("Weight (g)") +
+  xlab("ORP (mV)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_weight_orp
+
+# Phycoerytherin
+scatter_weight_phyco <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Phycoerythrin (RFU)`,
+             y = weight_g_weekly, 
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (weight_g_weekly - sd(weight_g_weekly, na.rm = TRUE)),
+                    ymax = (weight_g_weekly + sd(weight_g_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean Phycoerythrin (RFU) Per Trial") +
+  ylab("Weight (g)") +
+  xlab("Phycoerythrin (RFU)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_weight_phyco
+
+# Nitrate MR
+scatter_weight_nit_mr <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Nitrate MR`,
+             y = weight_g_weekly, 
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (weight_g_weekly - sd(weight_g_weekly, na.rm = TRUE)),
+                    ymax = (weight_g_weekly + sd(weight_g_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean Nitrate MR (mg/L) Per Trial") +
+  ylab("Weight (g)") +
+  xlab("Nitrate MR (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_weight_nit_mr
+
+# silica
+scatter_weight_silica <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Silica`,
+             y = weight_g_weekly, 
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (weight_g_weekly - sd(weight_g_weekly, na.rm = TRUE)),
+                    ymax = (weight_g_weekly + sd(weight_g_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean Silica (mg/L) Per Trial") +
+  ylab("Weight (g)") +
+  xlab("Silica (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_weight_silica
+
+# iron
+scatter_weight_iron <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Iron`,
+             y = weight_g_weekly, 
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (weight_g_weekly - sd(weight_g_weekly, na.rm = TRUE)),
+                    ymax = (weight_g_weekly + sd(weight_g_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean Iron (mg/L) Per Trial") +
+  ylab("Weight (g)") +
+  xlab("Iron (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_weight_iron
+
+# calcium
+scatter_weight_calcium <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Calcium`,
+             y = weight_g_weekly, 
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (weight_g_weekly - sd(weight_g_weekly, na.rm = TRUE)),
+                    ymax = (weight_g_weekly + sd(weight_g_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean Calcium (mg/L) Per Trial") +
+  ylab("Weight (g)") +
+  xlab("Calcium (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_weight_calcium
+
+```
+
+#### Not Significant
+```{r plots-weight-scatter-not-sig}
+# salinity
+scatter_weight_sal <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Salinity (PSU)`,
+             y = weight_g_weekly,
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (weight_g_weekly - sd(weight_g_weekly, na.rm = TRUE)),
+                    ymax = (weight_g_weekly + sd(weight_g_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean Salinity Per Trial") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_weight_sal
+
+# Chlorophyll
+scatter_weight_chlor <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Chlorophyll (RFU)`,
+             y = weight_g_weekly,
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (weight_g_weekly - sd(weight_g_weekly, na.rm = TRUE)),
+                    ymax = (weight_g_weekly + sd(weight_g_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean Chlorophyll (RFU) Per Trial") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_weight_chlor
+
+# DLI
+scatter_weight_dli <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = DLI,
+             y = weight_g_weekly,
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (weight_g_weekly - sd(weight_g_weekly, na.rm = TRUE)),
+                    ymax = (weight_g_weekly + sd(weight_g_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean DLI (mol*m^-2*s^-1) Per Trial") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_weight_dli
+
+# Turbidity
+scatter_weight_turb <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = Turbidity,
+             y = weight_g_weekly,
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (weight_g_weekly - sd(weight_g_weekly, na.rm = TRUE)),
+                    ymax = (weight_g_weekly + sd(weight_g_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean Turbidity (TAU) Per Trial") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_weight_turb
+
+# Phosphate
+scatter_weight_phos <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = Phosphate,
+             y = weight_g_weekly,
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (weight_g_weekly - sd(weight_g_weekly, na.rm = TRUE)),
+                    ymax = (weight_g_weekly + sd(weight_g_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean Phosphate (mg/L) Per Trial") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_weight_phos
+
+# Alkalinity
+scatter_weight_alkalinity <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = Alkalinity,
+             y = weight_g_weekly,
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (weight_g_weekly - sd(weight_g_weekly, na.rm = TRUE)),
+                    ymax = (weight_g_weekly + sd(weight_g_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean Alkalinity (mg/L) Per Trial") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_weight_alkalinity
+
+# Ammonia
+scatter_weight_ammonia <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = Ammonia,
+             y = weight_g_weekly,
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (weight_g_weekly - sd(weight_g_weekly, na.rm = TRUE)),
+                    ymax = (weight_g_weekly + sd(weight_g_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean Ammonia (mg/L) Per Trial") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_weight_ammonia
+
+```
+
+### Box Plots
+#### Significant
+```{r plots-weight-boxplot-sig}
+# temp
+box_weight_temp <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Temperature (ºC)`,
+             y = weight_g_weekly, 
+             color = Trial)) +
+  geom_boxplot() +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean Temperature (ºC) Per Trial") +
+  ylab("Weight (g)") +
+  xlab("Temperature (ºC)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+box_weight_temp
+
+# pH 
+box_weight_pH <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = pH,
+             y = weight_g_weekly, 
+             color = Trial)) +
+  geom_boxplot() +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean pH Per Trial") +
+  ylab("Weight (g)") +
+  xlab("pH") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+box_weight_pH
+
+# orp 
+box_weight_orp <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `ORP (mV)`,
+             y = weight_g_weekly, 
+             color = Trial)) +
+  geom_boxplot() +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean ORP (mV) Per Trial") +
+  ylab("Weight (g)") +
+  xlab("ORP (mV)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+box_weight_orp
+
+# phycoerytherin
+box_weight_phyco <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Phycoerythrin (RFU)`,
+             y = weight_g_weekly, 
+             color = Trial)) +
+  geom_boxplot() +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean Phycoerythrin (RFU) Per Trial") +
+  ylab("Weight (g)") +
+  xlab("Phycoerythrin (RFU)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+box_weight_phyco
+
+# nitrate mr
+box_weight_nit_mr <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Nitrate MR`,
+             y = weight_g_weekly, 
+             color = Trial)) +
+  geom_boxplot() +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean Nitrate MR Per Trial") +
+  ylab("Weight (g)") +
+  xlab("Nitrate MR") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+box_weight_nit_mr
+
+# silica
+box_weight_silica <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Silica`,
+             y = weight_g_weekly, 
+             color = Trial)) +
+  geom_boxplot() +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean Silica Per Trial") +
+  ylab("Weight (g)") +
+  xlab("Silica (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+box_weight_silica
+
+# iron
+box_weight_iron <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Iron`,
+             y = weight_g_weekly, 
+             color = Trial)) +
+  geom_boxplot() +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean Iron Per Trial") +
+  ylab("Weight (g)") +
+  xlab("Iron (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+box_weight_iron
+
+# calcium
+box_weight_calc <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Calcium`,
+             y = weight_g_weekly, 
+             color = Trial)) +
+  geom_boxplot() +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Weight (g) vs Mean Calcium Per Trial") +
+  ylab("Weight (g)") +
+  xlab("Calcium (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+box_weight_calc
+
+```
+
+
+## Surface Area
+### Scatter Plots
+#### Significant
+```{r scatter-surface-area-sig}
+# temperature
+scatter_sur_area_temp <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Temperature (ºC)`,
+             y = surface_area_cm3_weekly, 
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (surface_area_cm3_weekly - sd(surface_area_cm3_weekly, na.rm = TRUE)),
+                    ymax = (surface_area_cm3_weekly + sd(surface_area_cm3_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Surface Area (cm^3) vs Mean Temperature (ºC) Per Trial") +
+  ylab("Surface Area (cm^3)") +
+  xlab("Temperature (ºC)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_sur_area_temp
+
+# Nitrate MR
+scatter_sur_area_nit_mr <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Nitrate MR`,
+             y = surface_area_cm3_weekly, 
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (surface_area_cm3_weekly - sd(surface_area_cm3_weekly, na.rm = TRUE)),
+                    ymax = (surface_area_cm3_weekly + sd(surface_area_cm3_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3")) +
+  ggtitle("Surface Area (cm^3) vs Mean Nitrate MR (mg/L) Per Trial") +
+  ylab("Surface Area (cm^3)") +
+  xlab("Nitrate MR (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_sur_area_nit_mr
+
+# alkalinity
+scatter_sur_area_alk <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Alkalinity`,
+             y = surface_area_cm3_weekly, 
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (surface_area_cm3_weekly - sd(surface_area_cm3_weekly, na.rm = TRUE)),
+                    ymax = (surface_area_cm3_weekly + sd(surface_area_cm3_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3")) +
+  ggtitle("Surface Area (cm^3) vs Mean Alkalinity (mg/L) Per Trial") +
+  ylab("Surface Area (cm^3)") +
+  xlab("Alkalinity (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_sur_area_alk
+
+# silica
+scatter_sur_area_silica <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Silica`,
+             y = surface_area_cm3_weekly, 
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (surface_area_cm3_weekly - sd(surface_area_cm3_weekly, na.rm = TRUE)),
+                    ymax = (surface_area_cm3_weekly + sd(surface_area_cm3_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3")) +
+  ggtitle("Surface Area (cm^3) vs Mean Silica (mg/L) Per Trial") +
+  ylab("Surface Area (cm^3)") +
+  xlab("Silica (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_sur_area_silica
+
+# ammonia 
+scatter_sur_area_ammo <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Ammonia`,
+             y = surface_area_cm3_weekly, 
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (surface_area_cm3_weekly - sd(surface_area_cm3_weekly, na.rm = TRUE)),
+                    ymax = (surface_area_cm3_weekly + sd(surface_area_cm3_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3")) +
+  ggtitle("Surface Area (cm^3) vs Mean Ammonia (mg/L) Per Trial") +
+  ylab("Surface Area (cm^3)") +
+  xlab("Ammonia (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_sur_area_ammo
+
+```
+
+### Box Plots
+#### Significant
+```{r boxplots-sur-area-sig}
+# temperature 
+box_sur_area_temp <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Temperature (ºC)`,
+             y = surface_area_cm3_weekly, 
+             color = Trial)) +
+  geom_boxplot() +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Surface Area (cm^3) vs Mean Temperature (ºC) Per Trial") +
+  ylab("Surface Area (cm^3)") +
+  xlab("Temperature (ºC)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+box_sur_area_temp
+
+# nitrate
+box_sur_area_nit <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Nitrate MR`,
+             y = surface_area_cm3_weekly, 
+             color = Trial)) +
+  geom_boxplot() +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Surface Area (cm^3) vs Mean Nitrate (mg/L) Per Trial") +
+  ylab("Surface Area (cm^3)") +
+  xlab("Nitrate (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+box_sur_area_nit
+
+# alkalinity
+box_sur_area_alk <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Alkalinity`,
+             y = surface_area_cm3_weekly, 
+             color = Trial)) +
+  geom_boxplot() +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Surface Area (cm^3) vs Mean Alkalinity (mg/L) Per Trial") +
+  ylab("Surface Area (cm^3)") +
+  xlab("Alkalinity (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+box_sur_area_alk
+
+# silica
+box_sur_area_silica <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Silica`,
+             y = surface_area_cm3_weekly, 
+             color = Trial)) +
+  geom_boxplot() +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Surface Area (cm^3) vs Mean Silica (mg/L) Per Trial") +
+  ylab("Surface Area (cm^3)") +
+  xlab("Silica (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+box_sur_area_silica
+
+# ammonia
+box_sur_area_ammo <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Ammonia`,
+             y = surface_area_cm3_weekly, 
+             color = Trial)) +
+  geom_boxplot() +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Surface Area (cm^3) vs Mean Ammonia (mg/L) Per Trial") +
+  ylab("Surface Area (cm^3)") +
+  xlab("Ammonia (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+box_sur_area_ammo
+
+
+```
+
+
+## RGB
+### Scatter Plots
+#### Significant 
+```{r scatter-rgb-sig}
+# temperature
+scatter_rgb_temp <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Temperature (ºC)`,
+             y = rgb_weekly, 
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (rgb_weekly - sd(rgb_weekly, na.rm = TRUE)),
+                    ymax = (rgb_weekly + sd(rgb_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Pigmentation (RGB) vs Mean Temperature (ºC) Per Trial") +
+  ylab("Pigmentation (RGB)") +
+  xlab("Temperature (ºC)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_rgb_temp
+
+# salinity 
+scatter_rgb_sal <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Salinity (PSU)`,
+             y = rgb_weekly, 
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (rgb_weekly - sd(rgb_weekly, na.rm = TRUE)),
+                    ymax = (rgb_weekly + sd(rgb_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Pigmentation (RGB) vs Mean Salinity (PSU) Per Trial") +
+  ylab("Pigmentation (RGB)") +
+  xlab("Salinity (PSU)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_rgb_sal
+
+
+# pH
+scatter_rgb_pH <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `pH`,
+             y = rgb_weekly, 
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (rgb_weekly - sd(rgb_weekly, na.rm = TRUE)),
+                    ymax = (rgb_weekly + sd(rgb_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Pigmentation (RGB) vs Mean pH Per Trial") +
+  ylab("Pigmentation (RGB)") +
+  xlab("pH") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_rgb_pH
+
+
+# silica
+scatter_rgb_silica <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Silica`,
+             y = rgb_weekly, 
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (rgb_weekly - sd(rgb_weekly, na.rm = TRUE)),
+                    ymax = (rgb_weekly + sd(rgb_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Pigmentation (RGB) vs Mean Silica (mg/L) Per Trial") +
+  ylab("Pigmentation (RGB)") +
+  xlab("Silica (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_rgb_silica
+
+# iron
+scatter_rgb_iron <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Iron`,
+             y = rgb_weekly, 
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (rgb_weekly - sd(rgb_weekly, na.rm = TRUE)),
+                    ymax = (rgb_weekly + sd(rgb_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Pigmentation (RGB) vs Mean Iron (mg/L) Per Trial") +
+  ylab("Pigmentation (RGB)") +
+  xlab("Iron (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_rgb_iron
+
+# calcium
+scatter_rgb_calc <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Calcium`,
+             y = rgb_weekly, 
+             colour = Trial)) +
+  geom_point(size = 6) +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  geom_errorbar(aes(ymin = (rgb_weekly - sd(rgb_weekly, na.rm = TRUE)),
+                    ymax = (rgb_weekly + sd(rgb_weekly, na.rm = TRUE)))) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Pigmentation (RGB) vs Mean Calcium (mg/L) Per Trial") +
+  ylab("Pigmentation (RGB)") +
+  xlab("Calcium (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+scatter_rgb_calc
+
+
+```
+
+### Box Plots
+#### Significant 
+```{r boxplots-rgb-sig}
+# temperature 
+box_rgb_temp <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Temperature (ºC)`,
+             y = rgb_weekly, 
+             color = Trial)) +
+  geom_boxplot() +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Pigmentation (RGB) vs Mean Temperature (ºC) Per Trial") +
+  ylab("Pigmentation (RGB)") +
+  xlab("Temperature (ºC)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+box_rgb_temp
+
+# salinity 
+box_rgb_sal <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Salinity (PSU)`,
+             y = rgb_weekly, 
+             color = Trial)) +
+  geom_boxplot() +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Pigmentation (RGB) vs Mean Salinity (PSU) Per Trial") +
+  ylab("Pigmentation (RGB)") +
+  xlab("Salinity (PSU)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+box_rgb_sal
+
+# pH 
+box_rgb_pH <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `pH`,
+             y = rgb_weekly, 
+             color = Trial)) +
+  geom_boxplot() +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Pigmentation (RGB) vs Mean pH Per Trial") +
+  ylab("Pigmentation (RGB)") +
+  xlab("pH") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+box_rgb_pH
+
+# silica
+box_rgb_silica <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Silica`,
+             y = rgb_weekly, 
+             color = Trial)) +
+  geom_boxplot() +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Pigmentation (RGB) vs Mean Silica (mg/L) Per Trial") +
+  ylab("Pigmentation (RGB)") +
+  xlab("Silica (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+box_rgb_silica
+
+# iron
+box_rgb_iron <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Iron`,
+             y = rgb_weekly, 
+             color = Trial)) +
+  geom_boxplot() +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Pigmentation (RGB) vs Mean Iron (mg/L) Per Trial") +
+  ylab("Pigmentation (RGB)") +
+  xlab("Iron (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+box_rgb_iron
+
+# calcium
+box_rgb_calc <- dfCoralRateAllEnvMean %>%
+  ggplot(aes(x = `Calcium`,
+             y = rgb_weekly, 
+             color = Trial)) +
+  geom_boxplot() +
+  geom_smooth(method = "lm", se = FALSE, col = 'red') +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  ggtitle("Pigmentation (RGB) vs Mean Calcium (mg/L) Per Trial") +
+  ylab("Pigmentation (RGB)") +
+  xlab("Calcium (mg/L)") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+box_rgb_calcium
+
+```
+
+
+# References
+weighted least squares regression: <https://www.statology.org/weighted-least-squares-in-r/>

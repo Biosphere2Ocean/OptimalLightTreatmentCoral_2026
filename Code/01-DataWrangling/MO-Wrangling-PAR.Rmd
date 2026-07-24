@@ -1,0 +1,521 @@
+---
+Title: "Mini Ocean Lighting Project Wrangling: PAR Data and DLI Pipeline"
+Collaborators: "Connor Fenn, Savanna Saunders, Renee Grambihler"
+Project: "Mini Ocean Light Data"
+Institution: "Biosphere 2 Ocean"
+Description: "Wrangles PAR data obtained from LICOR instruments in the Mini Ocean during the summer, fall, and spring 2024-2025 Coral Lighting Experiments. Combines all PAR measurements from across all trials and then calculates the Daily Light Integral (DLI) for each day to use in downstream statistics."
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+**Input**
+  `MO-PBR1.TXT`: output file from LiCor LI-1500 Light Sensor Logger connected to LI-192 Underwater Quantum Sensor to record PAR for Treatment PBR Trial 1: 05/29/2024 - 06/17/2024
+        
+  `MO-PBR2.TXT`: output file from LiCor LI-1500 Light Sensor Logger connected to LI-192 Underwater Quantum Sensor to record PAR for Treatment PBR Trial 2: 07/09/2024 - 07/29/2024
+        
+  `MO-PBR3.TXT`: output file from LiCor LI-1500 Light Sensor Logger connected to LI-192 Underwater Quantum Sensor to record PAR for Treatment PBR Trial 3: 09/30/2024 - 11/11/2024
+        
+  `MO-PBR4.TXT`: output file from LiCor LI-1500 Light Sensor Logger connected to LI-192 Underwater Quantum Sensor to record PAR for Treatment PBR Trial 4: 12/20/2024 - 02/03/2025
+        
+  `MO-PBC1.TXT`: output file from LiCor LI-1500 Light Sensor Logger connected to LI-192 Underwater Quantum Sensor to record PAR for Treatment PBC Trial 1: 06/17/2024 - 07/09/2024
+        
+  `MO-PBC2.TXT`: output file from LiCor LI-1500 Light Sensor Logger connected to LI-192 Underwater Quantum Sensor to record PAR for Treatment PBC Trial 2: 11/11/2024 - 12/20/2024
+        
+  `MO-PBC3.TXT`: output file from LiCor LI-1500 Light Sensor Logger connected to LI-192 Underwater Quantum Sensor to record PAR for Treatment PBC Trial 3: 02/03/2025 - 03/17/2025
+  
+**Output**
+  `AllPAR.xlsx`: spreadsheet of all the PAR values from each trial.
+        
+  `DLI-All.xlsx`: spreadsheet of daily light integral values for each day from each trial.
+  
+
+# Import Libraries
+```{r Libraries, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(data.table)
+library(tibbletime)
+library(ggspectra)
+library(hms)
+library(stringr)
+library(writexl)
+#opts_chunk$set(echo = TRUE)
+```
+
+# Import Data
+Text files will need to be edited slightly before they are read in so that the heading they come with is deleted except for the column names. Files here should be already edited. 
+```{r Import and format data}
+# PBR-1
+dfPAR_PBR1 <- read_tsv("InputData/Raw/PAR/MO-PBR1.TXT",
+                   col_names = TRUE)
+
+# PBR-2
+dfPAR_PBR2 <- read_tsv("InputData/Raw/PAR/MO-PBR2.TXT",
+                   col_names = TRUE)
+                   
+# PBR-3
+dfPAR_PBR3 <- read_tsv("InputData/Raw/PAR/MO-PBR3.TXT",
+                   col_names = TRUE)
+                   
+# PBR-4
+dfPAR_PBR4 <- read_tsv("InputData/Raw/PAR/MO-PBR4.TXT",
+                   col_names = TRUE)
+
+# PBC-1
+dfPAR_PBC1 <- read_tsv("InputData/Raw/PAR/MO-PBC1.TXT",
+                   col_names = TRUE)
+
+# PBC-2
+dfPAR_PBC2 <- read_tsv("InputData/Raw/PAR/MO-PBC2.TXT",
+                   col_names = TRUE)
+
+# PBC-3
+dfPAR_PBC3 <- read_tsv("InputData/Raw/PAR/MO-PBC3.TXT",
+                   col_names = TRUE)
+
+```
+
+# Data Wrangling
+The LI-CORE files got messed up at some point and many entries moved the columns to the left by 1, which puts a bunch of NAs in when trying to do downstream calculations and ultimately removes a ton of data accidentally. Detected this by using `head(which(is.na(dfPAR_PBR1), arr.ind=TRUE))` after wrangling was done. Also a reason to not do this step until after importing the files in their original state with as few changes as possible
+
+## PBR 1
+```{r data-wrangling-pbr1}
+# select only columns we want: Date, Time, PAR values
+# rename column with PAR values 
+# make sure there aren't any repeat rows
+# change column classes to ones we want: Date is date class, PAR is numeric class, Time will stay character until it gets messed with in later calculations due to there being more than 1 observation per minute in most cases 
+# create Trial column with the lighting trial from that data file
+
+# remove column 7 because it's an extra column from importing
+dfPAR_PBR1_edit <- dfPAR_PBR1 %>%
+  select(-`...7`) 
+
+#check for NA values once empty column is gone
+head(which(is.na(dfPAR_PBR1_edit), arr.ind=TRUE)) 
+# row 47803, columns 4 and 5
+# rows 21792 - 21795 column 6
+
+# double check for columns being moved over using str_detect(Record, "-") to see if there are dashes used in the Date column in the Record column
+dfPAR_PBR1_edit %>%
+ filter(str_detect(Record, "-") == TRUE) %>%
+  nrow()
+# 66490 rows 
+
+# Keep regularly formatted data in this dataframe
+dfPAR_PBR1_edit <- dfPAR_PBR1_edit %>%
+  filter(str_detect(DATAH, "DATA") == TRUE) %>%
+  select(-Record, -CHK, -DATAH) %>%
+  rename(PAR = MINIOCEA)
+#check for NA values
+head(which(is.na(dfPAR_PBR1_edit), arr.ind=TRUE)) #none
+
+# keep irregularly formatted data in new data frame
+dfPAR_PBR1_filter <- dfPAR_PBR1 %>%
+  select(-`...7`) %>%
+  filter(str_detect(Record, "-") == TRUE) %>%
+  select(-MINIOCEA, -CHK, -DATAH) %>%
+  rename(PAR = Time) %>%
+  rename(Time = Date) %>%
+  rename(Date = Record)
+#check for NA values
+head(which(is.na(dfPAR_PBR1_filter), arr.ind=TRUE)) #one entry which looks like a mistake by the logger
+
+dfPAR_PBR1_bind <- rbind(dfPAR_PBR1_edit, dfPAR_PBR1_filter) %>%
+  mutate(Trial = "PBR 1", .after = Time)
+
+#check for NA values
+head(which(is.na(dfPAR_PBR1_bind), arr.ind=TRUE)) #same entry as before
+
+# get rid of row with na 
+dfPAR_PBR1_final <- dfPAR_PBR1_bind %>%
+  na.omit()%>%
+  mutate(Date = as.Date(Date)) %>%
+  mutate(Time = gsub("\\..*","",Time)) %>%
+  # make sure PAR values are numeric
+  mutate(PAR = as.numeric(PAR)) %>%
+  # mean PAR value per minute
+  mutate(Time = gsub('.{3}$', ':00', Time)) %>%
+  filter(PAR != 0)  %>% # PAR value of 0 with no decimal places seems to be some kind of logging error since all the other values have decimal places, and many of them are during daylight hours
+  group_by(Date, Time, Trial) %>%
+  summarise(across(where(is.numeric), ~ mean(.x, na.rm = TRUE))) 
+
+
+```
+
+## PBR 2
+```{r data-wrangling-pbr2}
+# select only columns we want: Date, Time, PAR values
+# rename column with PAR values 
+# make sure there aren't any repeat rows
+# change column classes to ones we want: Date is date class, PAR is numeric class, Time will stay character until it gets messed with in later calculations due to there being more than 1 observation per minute in most cases 
+# create Trial column with the lighting trial from that data file
+
+# remove column 7
+dfPAR_PBR2_edit <- dfPAR_PBR2 %>%
+  select(-`...7`)
+
+#check for NA values
+head(which(is.na(dfPAR_PBR2_edit), arr.ind=TRUE)) #none
+# double check for columns being moved over using str_detect(Record, "-") to see if there are dashes used in the Date column in the Record column
+dfPAR_PBR2_edit %>%
+ filter(str_detect(Record, "-") == TRUE) %>%
+  nrow()
+# 0 rows 
+# irregularities from PBR1 not here
+
+# finish normal data wrangling
+dfPAR_PBR2_final <- dfPAR_PBR2_edit %>%
+  select(-Record, -CHK, -DATAH) %>%
+  rename(PAR = MINIOCEA) %>%
+  mutate(Trial = "PBR 2", .after = Time)%>%
+  mutate(Date = as.Date(Date)) %>%
+  # make sure PAR values are numeric
+  mutate(PAR = as.numeric(PAR)) %>%
+  # mean PAR value per minute
+  mutate(Time = gsub('.{3}$', ':00', Time)) %>%
+  filter(PAR != 0)  %>% # PAR value of 0 with no decimal places seems to be some kind of logging error since all the other values have decimal places, and many of them are during daylight hours
+  group_by(Date, Time, Trial) %>%
+  summarise(across(where(is.numeric), ~ mean(.x, na.rm = TRUE))) 
+
+#check if time has milliseconds 
+dfPAR_PBR2_final %>%
+  filter(str_detect(Time, "\\..*") == TRUE) %>%
+  nrow() #none
+
+#check for NA values
+head(which(is.na(dfPAR_PBR2_final), arr.ind=TRUE)) #still none
+
+```
+
+## PBR 3
+```{r data-wrangling-pbr3}
+# select only columns we want: Date, Time, PAR values
+# rename column with PAR values 
+# make sure there aren't any repeat rows
+# change column classes to ones we want: Date is date class, PAR is numeric class, Time will stay character until it gets messed with in later calculations due to there being more than 1 observation per minute in most cases 
+# create Trial column with the lighting trial from that data file
+
+# remove column 7
+dfPAR_PBR3_edit <- dfPAR_PBR3 %>%
+  select(-`...7`)
+
+#check for NA values
+head(which(is.na(dfPAR_PBR3_edit), arr.ind=TRUE)) #none
+# double check for columns being moved over using str_detect(Record, "-") to see if there are dashes used in the Date column in the Record column
+dfPAR_PBR3_edit %>%
+ filter(str_detect(Record, "-") == TRUE) %>%
+  nrow()
+# 0 rows 
+# irregularities from PBR1 not here
+
+# finish normal data wrangling
+dfPAR_PBR3_final <- dfPAR_PBR3_edit %>%
+  select(-Record, -CHK, -DATAH) %>%
+  filter(Date <= "2024-11-11") %>%
+  rename(PAR = MO) %>%
+  mutate(Trial = "PBR 3", .after = Time)%>%
+  mutate(Date = as.Date(Date))
+
+#check if time has milliseconds 
+dfPAR_PBR3_final %>%
+  filter(str_detect(Time, "\\..*") == TRUE) %>%
+  nrow() #none
+
+#check for NA values
+head(which(is.na(dfPAR_PBR3_final), arr.ind=TRUE)) #still none
+
+```
+
+## PBR 4
+```{r data-wrangling-pbr4}
+# select only columns we want: Date, Time, PAR values
+# rename column with PAR values 
+# make sure there aren't any repeat rows
+# change column classes to ones we want: Date is date class, Time is time class, PAR is numeric class
+# create datetime column by pasting Date and Time data next to each other in each cell 
+# create Trial column with the lighting trial from that data file
+
+# remove column 7
+dfPAR_PBR4_edit <- dfPAR_PBR4 %>%
+  select(-`...7`)
+
+#check for NA values
+head(which(is.na(dfPAR_PBR4_edit), arr.ind=TRUE)) #2 NA's in col 6
+# double check for columns being moved over using str_detect(Record, "-") to see if there are dashes used in the Date column in the Record column
+dfPAR_PBR4_edit %>%
+ filter(str_detect(Record, "-") == TRUE) %>%
+  nrow()
+# 0 rows 
+# irregularities from PBR1 not except for some NAs in column 6 which will be removed anyways
+
+# finish normal data wrangling
+dfPAR_PBR4_final <- dfPAR_PBR4_edit %>%
+  select(-Record, -CHK, -DATAH) %>%
+  rename(PAR = MO) %>%
+  mutate(Trial = "PBR 4", .after = Time)%>%
+  mutate(Date = as.Date(Date))
+
+#check if time has milliseconds 
+dfPAR_PBR4_final %>%
+  filter(str_detect(Time, "\\..*") == TRUE) %>%
+  nrow() #none
+
+#check for NA values
+head(which(is.na(dfPAR_PBR4_final), arr.ind=TRUE)) #none
+
+
+```
+## PBC 1
+```{r data-wrangling-pbc1}
+# select only columns we want: Date, Time, PAR values
+# rename column with PAR values 
+# make sure there aren't any repeat rows
+# change column classes to ones we want: Date is date class, Time is time class, PAR is numeric class
+# create datetime column by pasting Date and Time data next to each other in each cell 
+# create Trial column with the lighting trial from that data file
+
+# remove column 7
+dfPAR_PBC1_edit <- dfPAR_PBC1 %>%
+  select(-`...7`)
+
+#check for NA values
+which(is.na(dfPAR_PBC1_edit), arr.ind=TRUE) 
+# 7 NAs: 4 in row 61, 2 in row 11662, 1 in row 164. remove instances
+
+# double check for columns being moved over using str_detect(Record, "-") to see if there are dashes used in the Date column in the Record column
+dfPAR_PBC1_edit %>%
+ filter(str_detect(Record, "-") == TRUE) %>%
+  nrow()
+# 0 rows 
+
+# finish normal data wrangling
+dfPAR_PBC1_final <- dfPAR_PBC1_edit %>%
+  na.omit() %>% # remove NA values
+  select(-Record, -CHK, -DATAH) %>%
+  rename(PAR = MINIOCEA) %>%
+  mutate(Trial = "PBC 1", .after = Time)%>%
+  mutate(Date = as.Date(Date)) %>%
+  # make sure PAR values are numeric
+  mutate(PAR = as.numeric(PAR)) %>%
+  # mean PAR value per minute
+  mutate(Time = gsub('.{3}$', ':00', Time)) %>%
+  filter(PAR != 0)  %>% # PAR value of 0 with no decimal places seems to be some kind of logging error since all the other values have decimal places, and many of them are during daylight hours
+  group_by(Date, Time, Trial) %>%
+  summarise(across(where(is.numeric), ~ mean(.x, na.rm = TRUE))) 
+
+#check if time has milliseconds 
+dfPAR_PBC1_final %>%
+  filter(str_detect(Time, "\\..*") == TRUE) %>%
+  nrow() #none
+
+#check for NA values
+head(which(is.na(dfPAR_PBC1_final), arr.ind=TRUE)) #none
+
+
+```
+
+## PBC 2
+```{r data-wrangling-pbc2}
+# select only columns we want: Date, Time, PAR values
+# rename column with PAR values 
+# make sure there aren't any repeat rows
+# change column classes to ones we want: Date is date class, Time is time class, PAR is numeric class
+# create datetime column by pasting Date and Time data next to each other in each cell 
+# create Trial column with the lighting trial from that data file
+
+# remove column 7
+dfPAR_PBC2_edit <- dfPAR_PBC2 %>%
+  select(-`...7`)
+
+#check for NA values
+which(is.na(dfPAR_PBC2_edit), arr.ind=TRUE) #none
+
+# double check for columns being moved over using str_detect(Record, "-") to see if there are dashes used in the Date column in the Record column
+dfPAR_PBC2_edit %>%
+ filter(str_detect(Record, "-") == TRUE) %>%
+  nrow()
+# 0 rows 
+
+# finish normal data wrangling
+dfPAR_PBC2_final <- dfPAR_PBC2_edit %>%
+  select(-Record, -CHK, -DATAH) %>%
+  rename(PAR = MO) %>%
+  mutate(Trial = "PBC 2", .after = Time)%>%
+  mutate(Date = as.Date(Date))
+
+#check if time has milliseconds 
+dfPAR_PBC2_final %>%
+  filter(str_detect(Time, "\\..*") == TRUE) %>%
+  nrow() #none
+
+#check for NA values
+head(which(is.na(dfPAR_PBC2_final), arr.ind=TRUE)) #none
+
+
+```
+
+## PBC 3
+Some PBR3 observations got appended to the PBR3 file on the datalogger, so will be fixing that here. Figured this out via plotting downstream.
+```{r data-wrangling-pbc3}
+# select only columns we want: Date, Time, PAR values
+# rename column with PAR values 
+# make sure there aren't any repeat rows
+# change column classes to ones we want: Date is date class, Time is time class, PAR is numeric class
+# create datetime column by pasting Date and Time data next to each other in each cell 
+# create Trial column with the lighting trial from that data file
+
+# remove column 7
+dfPAR_PBC3_edit <- dfPAR_PBC3 %>%
+  select(-`...7`)
+
+#check for NA values
+which(is.na(dfPAR_PBC3_edit), arr.ind=TRUE) #two in column 6 which is getting deleted anyways
+
+# double check for columns being moved over using str_detect(Record, "-") to see if there are dashes used in the Date column in the Record column
+dfPAR_PBC3_edit %>%
+ filter(str_detect(Record, "-") == TRUE) %>%
+  nrow()
+# 0 rows 
+
+### some PBR3 observations got appended to the PBR3 file on the datalogger: 
+dfPAR_PBC3_lost <- dfPAR_PBR3_edit %>%
+  select(-Record, -CHK, -DATAH) %>%
+  filter(Date > "2024-11-11") %>%
+  rename(PAR = MO) %>%
+  mutate(Trial = "PBC 3", .after = Time) %>%
+  mutate(Date = as.Date(Date))
+  
+# finish normal data wrangling for trial
+dfPAR_PBC3_final <- dfPAR_PBC3_edit %>%
+  select(-Record, -CHK, -DATAH) %>%
+  filter(Date <= "2025/03/17") %>% #make sure dates for PBC3 reflect dates of trial
+  rename(PAR = MO) %>%
+  mutate(Trial = "PBC 3", .after = Time) %>%
+  mutate(Date = as.Date(Date)) %>%
+  # add in lost observations
+  rbind(dfPAR_PBC3_lost)
+
+#check if time has milliseconds 
+dfPAR_PBC3_final %>%
+  filter(str_detect(Time, "\\..*") == TRUE) %>%
+  nrow() #none
+
+#check for NA values
+head(which(is.na(dfPAR_PBC3_final), arr.ind=TRUE)) #none
+
+
+```
+
+## Combine Frames
+```{r data-wrangling}
+# combine all dataframes above into one big dataframe by stacking the rows on top of each other - all dataframes must have the same number of columns
+
+# combine first 3 trials which record PAR every 1 seconds
+dfPAR_summer <- rbind(dfPAR_PBR1_final, dfPAR_PBC1_final, dfPAR_PBR2_final) %>%# make sure PAR values are numeric
+  mutate(PAR = as.numeric(PAR)) %>%
+  mutate(Time = gsub('.{3}$', ':00', Time)) %>%
+  filter(PAR != 0)  %>% # PAR value of 0 with no decimal places seems to be some kind of logging error since all the other values have decimal places, and many of them are during daylight hours
+  group_by(Date, Time, Trial) %>% # mean PAR per second
+  summarise(across(where(is.numeric), ~ mean(.x, na.rm = TRUE))) 
+
+# combine last 4 trials which record PAR every 5 seconds
+dfPAR_fall_spring <- rbind(dfPAR_PBC2_final, dfPAR_PBR3_final, dfPAR_PBC3_final, dfPAR_PBR4_final) %>%
+  mutate(PAR = as.numeric(PAR)) %>%
+  mutate(Time = gsub('.{3}$', ':00', Time)) %>%
+  filter(PAR != 0) # PAR value of 0 with no decimal places seems to be some kind of logging error since all the other values have decimal places, and many of them are during daylight hours
+  
+# all par values, but will keep using the separate par frames for down stream calculations
+dfPAR_all <- rbind(dfPAR_summer, dfPAR_fall_spring)
+
+# export dfPAR_all as excel file
+# write_xlsx(dfPAR_all, path = "InputData/Clean/EnvironmentalData/AllPAR.xlsx")
+
+```
+
+
+# Calculations 
+## Daily Light Integral (DLI)
+```{r calculate-DLI}
+# calculate DLI (for all the days in the file and output to a new file/table)
+# calculation: 1) add all PAR readings for the day; 2) multiply by the time interval in seconds between measurements; 3) divide by 1000000 to complete the unit conversion
+
+# create variable holding time interval between measurements in seconds, which is 1 second in summer and 5 seconds in fall/spring
+time_interval_summer = 1
+time_interval_fall_spring = 5
+
+# create dataframe of the sum of all PAR measurements for each day, keeping track of trial
+# summer
+parSums_summer <- dfPAR_summer %>%
+  group_by(Date, Trial) %>%
+  summarise(daily_par_sum = sum(PAR))
+# fall/spring
+parSums_fall_spring <- dfPAR_fall_spring %>%
+  group_by(Date, Trial) %>%
+  summarise(daily_par_sum = sum(PAR))
+
+# add a column to parSums dataframe that calculates the DLI using the formula above
+#summer 
+DLI_summer <- parSums_summer %>%
+  mutate(DLI = daily_par_sum * time_interval_summer / 1000000)
+#fall/spring
+DLI_fall_spring <- parSums_fall_spring %>%
+  mutate(DLI = daily_par_sum * time_interval_fall_spring / 1000000)
+
+# DLI for all trials 
+DLI_all <- rbind(DLI_summer, DLI_fall_spring)
+
+# save DLI file
+# write_xlsx(DLI_all, path = "InputData/Clean/EnvironmentalData/DLI-All.xlsx")
+
+```
+
+Make a bar plot (called a column plot in R due to the axes) to check that the data points are labeled under the correct trials by date. 
+```{r plot-dli}
+# check what DLI per trial looks like 
+DLI_all %>%
+  mutate(Trial = factor(Trial, levels = c("PBR 1", "PBC 1", "PBR 2", "PBC 2", "PBR 3", "PBC 3", "PBR 4"))) %>%
+  ggplot(aes(x = Date, 
+             y = DLI, 
+             fill = Trial)) +
+  geom_col() +
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank(), 
+        axis.line = element_blank())
+
+```
+
+
+## Daily Par Values
+Mean instantaneous PAR value per day 
+```{r calculate daily PAR values}
+# create a time tibble and use datetime column as the index; get rid of any rows with NA values in the datetime column
+
+#create datetime column in dfPAR_all
+dfPAR_all$datetime <- as.POSIXct(
+  paste(dfPAR_all$Date, dfPAR_all$Time),
+  format = "%Y-%m-%d %H:%M:%S",
+  tz = "UTC")
+
+lightTime <- as_tbl_time(dfPAR_all,index=datetime) %>%
+  filter(is.na(datetime)==FALSE)
+
+# calculate mean PAR value for each day, making sure we keep track of the treatments
+dailyMeanPar <- lightTime %>%
+  collapse_by("day") %>%
+  group_by(Date, Trial) %>%
+  summarise(across(where(is.numeric), ~ mean(.x, na.rm = TRUE))) %>%
+  filter(!Trial %in% c("PBR 1", "PBC 1", "PBR 2"))
+
+# check daily mean par over time 
+dailyMeanPar %>%
+  mutate(Trial = factor(Trial, levels = c("PBR 1", "PBC 1", "PBR 2", "PBC 2", "PBR 3", "PBC 3", "PBR 4"))) %>%
+  ggplot(aes(x = Date, 
+             y = PAR, 
+             fill = Trial)) +
+  geom_col()
+
+```
