@@ -55,7 +55,7 @@ dfNutrients_r2 <- read_excel("InputData/Raw/WaterQuality/Nutrients/Raceway2Nutri
   select(-Location)
  
 #### Water Quality #### 
-# YSI ProDSS Mini Ocean
+# YSI ProDSS data from Mini Ocean for 6/3/2024 - 3/17/2025
 dfYSI <- dfYSI <- read_csv("InputData/Raw/WaterQuality/ProDSS/PRO DSS MO All - Sheet1.csv") %>%
   select(-`User ID`, -`Unit ID`)%>%
   mutate(Date = as.Date(Date, format = "%m/%d/%y"))%>%
@@ -68,7 +68,8 @@ dfYSI <- dfYSI <- read_csv("InputData/Raw/WaterQuality/ProDSS/PRO DSS MO All - S
          `Chlorophyll (RFU)` = "Chl RFU",
          `Phycoerythrin (RFU)` = "PE RFU")
 
-# YSI ProDSS All Sites Sept 2024 - March 2025  (to get Control from R2)
+# Control Values: 
+# YSI ProDSS data from all site for Sept 2024 - March 2025 (to get Control from R2)
 dfYSI_allsites <- read_csv("InputData/Raw/WaterQuality/ProDSS/prodssbackup-250328-140416 All Sites.csv") %>%
   mutate(Date = as.Date(Date, format = "%m/%d/%y"))%>%
   # take out unit id, user id, dissolved oxygen, and conductivity columns
@@ -82,6 +83,10 @@ dfYSI_allsites <- read_csv("InputData/Raw/WaterQuality/ProDSS/prodssbackup-25032
          `Phycoerythrin (RFU)` = "PE RFU")
 
 # YSI ProDSS R2 Basic Parameters May 2024 - Sept 2024 (to get control. only have temp, salinity, and pH for Connor's trials because ProDSS downloading port was broken by the time we needed to add Connor's data to Savanna's honors thesis data)
+dfYSI_basic <- read_excel("InputData/Raw/WaterQuality/ProDSS/Raceway2Parameters_2024-05-29_2025-09-30_RoundsForm.xlsx") %>%
+  separate_wider_delim(cols = Datetime, 
+                       delim = " ", 
+                       names = c("Date", "Time"))
 
 ####  DLI #### 
 dfDLI <- read_excel("InputData/Clean/EnvironmentalData/DLI-All.xlsx") %>%
@@ -206,7 +211,6 @@ dfYSI_sav <- dfYSI_allsites %>%
 
 # ProDSS R2 - Connor's data
 dfYSI_basic_edit <- dfYSI_basic %>%
-  separate(col = Datetime, into = c("Date", "Time"), sep = " ", remove = TRUE) %>%
   mutate(Date = as.Date(Date)) %>%
   #convert fahrenheit to celcius
   mutate(`Temperature (ºC)` = (temp_f - 32) * 5 / 9, .after = Time) %>%
@@ -251,7 +255,10 @@ dfAllEnvVar <- data.frame(Date = seq.Date(from = as.Date("2024-05-29"), to = as.
            into = c("Treatment", "trial_num"),
            remove = FALSE) %>%
   select(-trial_num) %>%
-  filter(is.na(Trial) == FALSE)
+  filter(is.na(Trial) == FALSE) %>%
+  # add DLI PBR2 value - only one day was recorded and it got lost in the wrangling
+  mutate(DLI = ifelse(Trial == "PBR 2", 0.10036601000, DLI)) 
+                   
 
 # long version of dfAllEnvVar
 dfAllEnvVar_long <- dfAllEnvVar %>%

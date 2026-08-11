@@ -3,7 +3,7 @@ title: "Mini Ocean Lighting Project Stats: Confounding Factors"
 collaborators: Savanna Saunders, Renee Grambihler
 project: Mini Ocean Light Data
 institution: Biosphere 2 Ocean
-description: "Uses a generalized linear model to analyze how size, weight, and color changes in corals grown in Mini Ocean under different lighting treatments from the Summer 2024 to Spring 2025 Coral Lighting Experiment were affected by environmental factors"
+description: "Uses a weighted least squares multiple linear regression model to analyze how size, weight, and color changes in corals grown in Mini Ocean under different lighting treatments from the Summer 2024 to Spring 2025 Coral Lighting Experiment were affected by environmental factors"
 output: html_document
 editor_options: 
   markdown: 
@@ -397,6 +397,9 @@ func_wls_weight <- function(df) {
      weights = 1/lm(abs(resid) ~ pred)$fitted.values^2)
 }
 
+# wls_list_weight <- lm_resids_weight %>%
+#  mutate(wls = map(data, func_wls_weight))
+
 # surface area
 func_wls_surface_area <- function(df) {
   lm(formula = surface_area_cm3_weekly ~ var_values, data = df, 
@@ -611,6 +614,53 @@ RGB: r^2 all 0.10 or less
 - Calcium
 
 Quite a few variables have a significant linear relationship with weight, but none of them have a higher r^2 than 0.20, meaning that the relationships are fairly weak. 
+
+
+#### Weighted Multiple Linear Regression
+Instead of looking at how each environmental variable individually affected the dependent varaibles, a multiple linear regression will add in the effects from multiple environmental variables. 
+
+##### Prepare Data
+```{r wls-mult-data-prep}
+
+
+```
+
+##### Regression
+```{r wls-mult}
+# model1 <- lm(Total.Wasps ~ Temperature.Outside + Temperature.Inside + HourAdjusted, data = wasps2) 
+
+# # Sample multiple regression data frame
+# df <- data.frame(y, x1, x2)
+# 
+# # Step 1: Fit ordinary least squares model
+# ols_fit <- lm(y ~ x1 + x2, data = df)
+# 
+# # Step 2: Calculate weights based on residual variance
+# wts <- 1 / fitted(lm(abs(residuals(ols_fit)) ~ fitted(ols_fit)))^2
+# 
+# # Step 3: Fit weighted least squares model
+# wls_fit <- lm(y ~ x1 + x2, data = df, weights = wts)
+# 
+# # View results
+# summary(wls_fit)
+
+# weight 
+# fit ordinary least squares model 
+ols_mult_fit <- lm(weight_g_weekly ~ `Temperature (ºC)` + `Salinity (PSU)` + pH + `ORP (mV)` + `Chlorophyll (RFU)` + `Phycoerythrin (RFU)` + DLI + Turbidity + Phosphate + `Nitrate MR` + Alkalinity + Silica + Iron + Ammonia + Calcium, 
+                   data = dfCoralRateAllEnvMean)
+
+# calculate weights based on residual variance 
+wts <- 1/ fitted(lm(abs(residuals(ols_mult_fit)) ~ fitted(ols_mult_fit)))^2
+
+# fit weighted least squares model
+wls_mult_fit <- lm(weight_g_weekly ~ `Temperature (ºC)` + `Salinity (PSU)` + pH + `ORP (mV)` + `Chlorophyll (RFU)` + `Phycoerythrin (RFU)` + DLI + Turbidity + Phosphate + `Nitrate MR` + Alkalinity + Silica + Iron + Ammonia + Calcium, 
+                   data = dfCoralRateAllEnvMean,
+                   weights = wts)
+
+wts
+```
+
+
 
 #### Summary of Linear and Weighted Least Squares Regression Models
 Quite a few variables have a significant linear relationship with weight, but none of them have a higher r^2 than 0.20, meaning that the relationships are fairly weak. 
