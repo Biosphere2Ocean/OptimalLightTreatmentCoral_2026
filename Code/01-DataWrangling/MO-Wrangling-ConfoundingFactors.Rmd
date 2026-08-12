@@ -271,10 +271,10 @@ dfAllEnvVar_long <- dfAllEnvVar %>%
 
 ```{r write-excel-files}
 # environmental variables wide
-write_xlsx(dfAllEnvVar, "InputData/Clean/All-Environmental-Variables-Wide.xlsx")
+write_xlsx(dfAllEnvVar, "InputData/Clean/EnvironmentalData/All-Environmental-Variables-Wide.xlsx")
 
 # environmental variables long
-write_xlsx(dfAllEnvVar_long, "InputData/Clean/All-Environmental-Variables-Long.xlsx")
+write_xlsx(dfAllEnvVar_long, "InputData/Clean/EnvironmentalData/All-Environmental-Variables-Long.xlsx")
 
 ```
 
