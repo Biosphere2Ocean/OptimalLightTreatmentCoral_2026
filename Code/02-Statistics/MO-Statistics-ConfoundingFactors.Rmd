@@ -138,16 +138,21 @@ for (i in 1:length(var_names_env)){
 # Confounding Factor Testing
 ## Do the environmental factors vary significantly between trials? 
 ### Kruskal-Wallis
+#### Experimental 
 ```{r env-fact-vary-trial-kruskal-experimental}
 # kruskal-wallis test to see which variables are significantly different by trial
-kruskal_all <- dfAllEnvVar_long %>%
+kruskal_exp <- dfAllEnvVar_long %>%
+  # remove controls
+  filter(Treatment != "Control") %>%
   group_by(variable_names) %>%
   kruskal_test(variable_values ~ Trial)%>%
   filter(p < 0.05) %>%
   mutate(p = round(p, digits = 4))
 
 # kruskal-wallis effect size to see how large the effect size is for each variable 
-kruskal_all_effsize <- dfAllEnvVar_long %>%
+kruskal_exp_effsize <- dfAllEnvVar_long %>%
+  # remove controls
+  filter(Treatment != "Control") %>%
   group_by(variable_names) %>%
   kruskal_effsize(variable_values ~ Trial) %>%
   mutate(effsize = round(effsize, 2))
@@ -157,7 +162,6 @@ kruskal_all_effsize <- dfAllEnvVar_long %>%
 Significant p-value from Kruskal-Wallis test: 
 - Alkalinity
 - Ammonia
-- Calcium
 - Chlorophyll 
 - DLI 
 - ORP
@@ -167,57 +171,142 @@ Significant p-value from Kruskal-Wallis test:
 - Temperature
 
 Effect size of significant variables based on Kruskal-Wallis test: 
-- Alkalinity: 0.05 = Small
-- Ammonia: 0.02 = Small
-- Calcium: 0.06 = Moderate
-- Chlorophyll: 0.20 = **Large**
-- DLI: 0.20 = **Large**
-- ORP: 0.15 = **Large**
-- pH: 0.59 = **Large**
-- Phycoerytherin: 0.29 = **Large**
-- Salinity: 0.42 = **Large**
-- Temperature: 0.39 = **Large**
+- Alkalinity: 0.04 = Small
+- Ammonia: 0.03 = Small
+- Chlorophyll: 0.30 = **Large**
+- DLI: 0.25 = **Large**
+- ORP: 0.13 = Moderate
+- pH: 0.33 = **Large**
+- Phycoerytherin: 0.41 = **Large**
+- Salinity: 0.18 = **Large**
+- Temperature: 0.38 = **Large**
 
 4% of variance in Alkalinity is explained by Trial. 
-2% of variance in Ammonia is explained by Trial. 
-6% of variance in Calcium is explained by Trial.
-20% of variance in Chlorophyll is explained by Trial.
-20% of variance in DLI is explained by Trial.
-15% of variance in ORP is explained by Trial.
-59% of variance in pH is explained by Trial.
-29% of variance in Phycoerytherin is explained by Trial.
-42% of variance in Salinity is explained by Trial. (18% when Control not included)
-39% of variance in Temperature is explained by Trial.
+3% of variance in Ammonia is explained by Trial. 
+30% of variance in Chlorophyll is explained by Trial.
+25% of variance in DLI is explained by Trial.
+13% of variance in ORP is explained by Trial.
+33% of variance in pH is explained by Trial.
+41% of variance in Phycoerytherin is explained by Trial.
+18% of variance in Salinity is explained by Trial. 
+38% of variance in Temperature is explained by Trial.
 
-#### Output Data
-```{r env-fact-vary-trial-kruskal-output-data}
+##### Output Data
+```{r env-fact-vary-trial-kruskal-output-data-experimental}
 # stats results
-#write_xlsx(kruskal_all, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-KruskalWallis-InitialResults.xlsx")
+#write_xlsx(kruskal_exp, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-KruskalWallis-InitialResults-Experimental.xlsx")
 
 # effect size results
-#write_xlsx(kruskal_all_effsize, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-KruskalWallis-EffectSize.xlsx")
+#write_xlsx(kruskal_exp_effsize, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-KruskalWallis-EffectSize-Experimental.xlsx")
+
+```
+
+#### Control 
+```{r env-fact-vary-trial-kruskal-control}
+# kruskal-wallis test to see which variables are significantly different by trial
+kruskal_control <- dfAllEnvVar_long %>%
+  # remove controls
+  filter(Treatment == "Control") %>%
+  group_by(variable_names) %>%
+  kruskal_test(variable_values ~ Trial)%>%
+  filter(p < 0.05) %>%
+  mutate(p = round(p, digits = 4))
+
+# kruskal-wallis effect size to see how large the effect size is for each variable 
+kruskal_control_effsize <- dfAllEnvVar_long %>%
+  # remove controls
+  filter(Treatment == "Control") %>%
+  group_by(variable_names) %>%
+  kruskal_effsize(variable_values ~ Trial) %>%
+  mutate(effsize = round(effsize, 2))
+
+```
+
+Significant p-value from Kruskal-Wallis test: 
+- Alkalinity
+- Chlorophyll 
+- Iron
+- ORP
+- pH
+- Phycoerytherin
+- Salinity 
+- Temperature
+
+Effect size of significant variables based on Kruskal-Wallis test: 
+- Alkalinity: 0.08 = Small
+- Chlorophyll: 0.51 = **Large**
+- Iron: 0.08 = Small
+- ORP: 0.10 = Moderate
+- pH: 0.18 = **Large**
+- Phycoerytherin: 0.35 = **Large**
+- Salinity: 0.21 = **Large**
+- Temperature: 0.09 = Moderate
+
+8% of variance in Alkalinity is explained by Trial. 
+51% of variance in Chlorophyll is explained by Trial.
+8% of variance in Iron is explained by Trial.
+10% of variance in ORP is explained by Trial.
+18% of variance in pH is explained by Trial.
+35% of variance in Phycoerytherin is explained by Trial.
+21% of variance in Salinity is explained by Trial. 
+9% of variance in Temperature is explained by Trial.
+
+##### Output Data
+```{r env-fact-vary-trial-kruskal-output-data-control}
+# stats results
+# write_xlsx(kruskal_control, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-KruskalWallis-InitialResults-Control.xlsx")
+
+# effect size results
+# write_xlsx(kruskal_control_effsize, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-KruskalWallis-EffectSize-Control.xlsx")
 
 ```
 
 
+
 ### Dunn's Test of Multiple Comparisons
-```{r env-fact-vary-trial-all-dunn}
+#### Experimental 
+```{r env-fact-vary-trial-all-dunn-experimental}
 # dunn test for nonparametric pairwise multiple comparisons of ranked data
-dunn_all <- dfAllEnvVar_long %>%
+dunn_exp <- dfAllEnvVar_long %>%
+  filter(Treatment != "Control") %>%
   group_by(variable_names) %>%
   dunn_test(variable_values ~ Trial, p.adjust.method = "bonferroni", detailed = TRUE) %>%
   select(-p, -method) %>%
-  mutate(p.adj = round(p.adj, 4))
+  mutate(p.adj = round(p.adj, 4)) 
 
 # make excel file of results
-# write_xlsx(dunn_all, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-Dunn.xlsx")
+# write_xlsx(dunn_exp, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-Dunn-Experimental.xlsx")
 
 ```
 
 Significant variables from Dunn test: 
-- Alkalinity
+- Chlorophyll
+- DLI
+- ORP
+- pH
+- Phycoerytherin
+- Salinity 
+- Temperature
+
+See ConfoundingFactorTesting-Dunn-Experimental.xlsx for details (estimates are mean ranks difference rather than difference in means/medians)
+
+#### Control 
+```{r env-fact-vary-trial-all-dunn}
+# dunn test for nonparametric pairwise multiple comparisons of ranked data
+dunn_control <- dfAllEnvVar_long %>%
+  filter(Treatment == "Control") %>%
+  group_by(variable_names) %>%
+  dunn_test(variable_values ~ Trial, p.adjust.method = "bonferroni", detailed = TRUE) %>%
+  select(-p, -method) %>%
+  mutate(p.adj = round(p.adj, 4)) 
+
+# make excel file of results
+# write_xlsx(dunn_control, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-Dunn-Control.xlsx")
+
+```
+
+Significant variables from Dunn test: 
 - Ammonia
-- Calcium
 - Chlorophyll
 - ORP
 - pH
@@ -225,7 +314,8 @@ Significant variables from Dunn test:
 - Salinity 
 - Temperature
 
-See ConfoundingFactorTesting-Dunn.xlsx for details (estimates are mean ranks difference rather than difference in means/medians)
+See ConfoundingFactorTesting-Dunn-Experimental.xlsx for details (estimates are mean ranks difference rather than difference in means/medians)
+
 
 ## Do the environmental variables influence the response variables? 
 ### Data Setup
