@@ -620,8 +620,11 @@ Quite a few variables have a significant linear relationship with weight, but no
 Instead of looking at how each environmental variable individually affected the dependent varaibles, a multiple linear regression will add in the effects from multiple environmental variables. 
 
 ##### Prepare Data
+The weighted data will only work if every variable has the same amount of data. DLI, Alkalinity, Silica, and Iron all have missing values. DLI is missing Control, Alkalinity is missing PBR 1, and Silica and Iron are missing PBC 2, PBC 3, and PBR 3. 
 ```{r wls-mult-data-prep}
-
+# remove Control treatment bc dli doesnt have a control unfortunately 
+dfCoralRateAllEnvMean_ex <- dfCoralRateAllEnvMean %>%
+  filter(Treatment != "Control")
 
 ```
 
@@ -644,21 +647,23 @@ Instead of looking at how each environmental variable individually affected the 
 # # View results
 # summary(wls_fit)
 
-# remove control bc dli doesnt have a control unfortunately 
-dfCoralRateAllEnvMean_ex <- dfCoralRateAllEnvMean %>%
-  filter(Treatment != "Control")
 
 # weight 
 # fit ordinary least squares model 
-ols_mult_fit <- lm(weight_g_weekly ~ `Temperature (ºC)` + `Salinity (PSU)` + pH + DLI + `Nitrate MR`, 
-                   data = dfCoralRateAllEnvMean_ex)
+## all variables 
+ols_mult_fit <- lm(weight_g_weekly ~ `Temperature (ºC)` + `Salinity (PSU)` + pH +
+                     `ORP (mV)` + `Chlorophyll (RFU)` + `Phycoerythrin (RFU)` + 
+                     DLI + Turbidity + Phosphate + `Nitrate MR` + Ammonia + Calcium,
+                   data = dfCoralRateAllEnvMean)
 
 # calculate weights based on residual variance 
 wts <- 1/ fitted(lm(abs(residuals(ols_mult_fit)) ~ fitted(ols_mult_fit)))^2
 
 # fit weighted least squares model
-wls_mult_fit <- lm(weight_g_weekly ~ `Temperature (ºC)` + `Salinity (PSU)` + pH + DLI + `Nitrate MR`, 
-                   data = dfCoralRateAllEnvMean_ex,
+wls_mult_fit <- lm(weight_g_weekly ~ `Temperature (ºC)` + `Salinity (PSU)` + pH +
+                     `ORP (mV)` + `Chlorophyll (RFU)` + `Phycoerythrin (RFU)` + 
+                     DLI + Turbidity + Phosphate + `Nitrate MR` + Ammonia + Calcium,
+                   data = dfCoralRateAllEnvMean,
                    weights = wts)
 
 summary(wls_mult_fit)

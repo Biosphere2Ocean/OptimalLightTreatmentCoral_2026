@@ -25,6 +25,8 @@ editor_options:
         
   `MO-PBC3.TXT`: output file from LiCor LI-1500 Light Sensor Logger connected to LI-192 Underwater Quantum Sensor to record PAR for Treatment PBC Trial 3: 02/03/2025 - 03/17/2025
   
+  `R1 PAR.xlsx`: spreadsheet with Raceway 1 PAR values from PARwise meter spectrum snapshots for PBR 1, PBR 3, PBC 2, and PBC 3. PBR 2 and PBC1 were not recorded.  
+  
 **Output**
   `AllPAR.xlsx`: spreadsheet of all the PAR values from each trial.
         
@@ -40,6 +42,7 @@ library(tibbletime)
 library(ggspectra)
 library(hms)
 library(stringr)
+library(readxl)
 library(writexl)
 #opts_chunk$set(echo = TRUE)
 ```
@@ -74,6 +77,9 @@ dfPAR_PBC2 <- read_tsv("InputData/Raw/PAR/MO-PBC2.TXT",
 # PBC-3
 dfPAR_PBC3 <- read_tsv("InputData/Raw/PAR/MO-PBC3.TXT",
                    col_names = TRUE)
+
+# Control 
+dfPAR_control <- read_excel("InputData/Raw/PAR/R1 PAR.xlsx")
 
 ```
 
@@ -408,6 +414,16 @@ head(which(is.na(dfPAR_PBC3_final), arr.ind=TRUE)) #none
 
 ```
 
+## Control - Raceway 1
+```{r data-wrangling-control}
+dfPAR_control_final <- dfPAR_control %>%
+  select(-Trial, -Photoperiod_hrs) %>%
+  rename(Trial = Treatment) %>%
+  add_column(Time = NA, .after = "Date")
+
+```
+
+
 ## Combine Frames
 ```{r data-wrangling}
 # combine all dataframes above into one big dataframe by stacking the rows on top of each other - all dataframes must have the same number of columns
@@ -427,7 +443,7 @@ dfPAR_fall_spring <- rbind(dfPAR_PBC2_final, dfPAR_PBR3_final, dfPAR_PBC3_final,
   filter(PAR != 0) # PAR value of 0 with no decimal places seems to be some kind of logging error since all the other values have decimal places, and many of them are during daylight hours
   
 # all par values, but will keep using the separate par frames for down stream calculations
-dfPAR_all <- rbind(dfPAR_summer, dfPAR_fall_spring)
+dfPAR_all <- rbind(dfPAR_summer, dfPAR_fall_spring, dfPAR_control_final)
 
 # export dfPAR_all as excel file
 # write_xlsx(dfPAR_all, path = "InputData/Clean/EnvironmentalData/AllPAR.xlsx")
@@ -439,11 +455,12 @@ dfPAR_all <- rbind(dfPAR_summer, dfPAR_fall_spring)
 ## Daily Light Integral (DLI)
 ```{r calculate-DLI}
 # calculate DLI (for all the days in the file and output to a new file/table)
-# calculation: 1) add all PAR readings for the day; 2) multiply by the time interval in seconds between measurements; 3) divide by 1000000 to complete the unit conversion
+# calculation: 1) add all PAR readings for the day; 2) multiply by the time interval in seconds between measurements; 3) divide by 1,000,000 to complete the unit conversion
 
 # create variable holding time interval between measurements in seconds, which is 1 second in summer and 5 seconds in fall/spring
 time_interval_summer = 1
 time_interval_fall_spring = 5
+time_interval_control = 3600
 
 # create dataframe of the sum of all PAR measurements for each day, keeping track of trial
 # summer
@@ -454,6 +471,11 @@ parSums_summer <- dfPAR_summer %>%
 parSums_fall_spring <- dfPAR_fall_spring %>%
   group_by(Date, Trial) %>%
   summarise(daily_par_sum = sum(PAR))
+# control 
+## only 1 reading per day, but photoperiod is 12 hours, which is 3600 seconds per hour. Since R1 was in a dark room with little to no outside light, daily PAR was mostly steady and started and ended with the 12-hour photoperiod the coral lights were set on. Multiply each observation by 12 to get par sum as though a recording is being taken each hour. 
+parSums_control <- dfPAR_control_final %>%
+  group_by(Date, Trial) %>%
+  summarise(daily_par_sum = PAR * 12)
 
 # add a column to parSums dataframe that calculates the DLI using the formula above
 #summer 
@@ -462,9 +484,13 @@ DLI_summer <- parSums_summer %>%
 #fall/spring
 DLI_fall_spring <- parSums_fall_spring %>%
   mutate(DLI = daily_par_sum * time_interval_fall_spring / 1000000)
+# control 
+## only 1 reading per day, but photoperiod is 12 hours, which is 3600 seconds per hour. Multiply each observation by 12, then by 3600, then divide by 1000000 
+DLI_control <- parSums_control %>%
+  mutate(DLI = daily_par_sum * time_interval_control / 1000000)
 
 # DLI for all trials 
-DLI_all <- rbind(DLI_summer, DLI_fall_spring)
+DLI_all <- rbind(DLI_summer, DLI_fall_spring, DLI_control)
 
 # save DLI file
 # write_xlsx(DLI_all, path = "InputData/Clean/EnvironmentalData/DLI-All.xlsx")
@@ -475,7 +501,7 @@ Make a bar plot (called a column plot in R due to the axes) to check that the da
 ```{r plot-dli}
 # check what DLI per trial looks like 
 DLI_all %>%
-  mutate(Trial = factor(Trial, levels = c("PBR 1", "PBC 1", "PBR 2", "PBC 2", "PBR 3", "PBC 3", "PBR 4"))) %>%
+  mutate(Trial = factor(Trial, levels = c("PBR 1", "PBC 1", "PBR 2", "PBC 2", "PBR 3", "PBC 3", "PBR 4", "Control"))) %>%
   ggplot(aes(x = Date, 
              y = DLI, 
              fill = Trial)) +
