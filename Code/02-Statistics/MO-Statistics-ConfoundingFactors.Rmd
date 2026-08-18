@@ -51,7 +51,9 @@ Import Coral Data and Environmental Data: nutrients, water quality, DLI.
 # coral data
 # rate of change per week
 dfCoral_rates <- read_csv("InputData/Clean/CoralData/CoralColorWeightData_Rates.csv") %>%
-  filter(Trial != "PBR 4") # take out PBR 4 because it isn't in the environemntal data files
+  # take out PBR 4 because it isn't in the environemntal data files
+  filter(Trial != "PBR 4" & Trial != "PBR 4 Control") 
+
 
 # environmental data
 # wide version
@@ -136,23 +138,19 @@ for (i in 1:length(var_names_env)){
 # Confounding Factor Testing
 ## Do the environmental factors vary significantly between trials? 
 ### Kruskal-Wallis
-```{r env-fact-vary-trial-all-kruskal}
+```{r env-fact-vary-trial-kruskal-experimental}
 # kruskal-wallis test to see which variables are significantly different by trial
 kruskal_all <- dfAllEnvVar_long %>%
   group_by(variable_names) %>%
   kruskal_test(variable_values ~ Trial)%>%
   filter(p < 0.05) %>%
   mutate(p = round(p, digits = 4))
-# make excel file of results
-#write_xlsx(kruskal_all, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-KruskalWallis-InitialResults.xlsx")
 
 # kruskal-wallis effect size to see how large the effect size is for each variable 
 kruskal_all_effsize <- dfAllEnvVar_long %>%
   group_by(variable_names) %>%
   kruskal_effsize(variable_values ~ Trial) %>%
   mutate(effsize = round(effsize, 2))
-# make excel file of results
-#write_xlsx(kruskal_all_effsize, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-KruskalWallis-EffectSize.xlsx")
 
 ```
 
@@ -173,23 +171,34 @@ Effect size of significant variables based on Kruskal-Wallis test:
 - Ammonia: 0.02 = Small
 - Calcium: 0.06 = Moderate
 - Chlorophyll: 0.20 = **Large**
-- DLI: 0.02 = Small
+- DLI: 0.20 = **Large**
 - ORP: 0.15 = **Large**
 - pH: 0.59 = **Large**
 - Phycoerytherin: 0.29 = **Large**
 - Salinity: 0.42 = **Large**
 - Temperature: 0.39 = **Large**
 
-3% of variance in Alkalinity is explained by Trial. 
-2% of variance in Ammonia is explained by Trial.
-6% of variance in Calcium is explained by Trial. 
+4% of variance in Alkalinity is explained by Trial. 
+2% of variance in Ammonia is explained by Trial. 
+6% of variance in Calcium is explained by Trial.
 20% of variance in Chlorophyll is explained by Trial.
-12% of variance in DLI is explained by Trial.
-16% of variance in ORP is explained by Trial.
+20% of variance in DLI is explained by Trial.
+15% of variance in ORP is explained by Trial.
 59% of variance in pH is explained by Trial.
 29% of variance in Phycoerytherin is explained by Trial.
-42% of variance in Salinity is explained by Trial.
+42% of variance in Salinity is explained by Trial. (18% when Control not included)
 39% of variance in Temperature is explained by Trial.
+
+#### Output Data
+```{r env-fact-vary-trial-kruskal-output-data}
+# stats results
+#write_xlsx(kruskal_all, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-KruskalWallis-InitialResults.xlsx")
+
+# effect size results
+#write_xlsx(kruskal_all_effsize, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-KruskalWallis-EffectSize.xlsx")
+
+```
+
 
 ### Dunn's Test of Multiple Comparisons
 ```{r env-fact-vary-trial-all-dunn}
@@ -221,16 +230,35 @@ See ConfoundingFactorTesting-Dunn.xlsx for details (estimates are mean ranks dif
 ## Do the environmental variables influence the response variables? 
 ### Data Setup
 Since the environmental data is a time series, but the coral data isn't, and we want to compare them directly, we'll take the mean of the environmental data for each trial but leave the coral data alone. This will give us a dataframe that looks like different values for the coral data with the same environmental value for each coral data point for each trial. `View(dfCoralRateAllEnvMean)` to see what that looks like. 
-```{r env-fact-infl-data-setup}
+#### Experimental
+```{r env-fact-infl-data-setup-experimental}
 # mean environmental variable per trial
-dfAllEnvVar_mean <- dfAllEnvVar %>%
+dfAllEnvVar_mean_exp <- dfAllEnvVar %>%
+  filter(Treatment != "Control") %>%
   group_by(Treatment, Trial) %>%
   summarise(across(where(is.numeric), ~ mean(.x, na.rm = TRUE)))
 
 # combine with coral data 
-dfCoralRateAllEnvMean <- dfCoral_rates %>%
-  left_join(dfAllEnvVar_mean) %>%
-  mutate(Trial = factor(Trial, levels = c("PBR 1", "PBC 1", "PBR 2", "PBR 3", "PBC 2", "PBC 3", "Control")))
+dfCoralRateAllEnvMean_exp <- dfCoral_rates %>%
+  filter(Treatment != "Control") %>%
+  left_join(dfAllEnvVar_mean_exp) %>%
+  mutate(Trial = factor(Trial, levels = c("PBR 1", "PBC 1", "PBR 2", "PBR 3", "PBC 2", "PBC 3")))
+
+```
+
+#### Control
+```{r env-fact-infl-data-setup-experimental}
+# mean environmental variable per trial
+dfAllEnvVar_mean_control <- dfAllEnvVar %>%
+  filter(Treatment == "Control") %>%
+  group_by(Treatment, Trial) %>%
+  summarise(across(where(is.numeric), ~ mean(.x, na.rm = TRUE)))
+
+# combine with coral data 
+dfCoralRateAllEnvMean_control <- dfCoral_rates %>%
+  filter(Treatment == "Control") %>%
+  left_join(dfAllEnvVar_mean_control) %>%
+  mutate(Trial = factor(Trial, levels = c("Control")))
 
 ```
 
@@ -257,9 +285,10 @@ func_lm_rgb <- function(df) {
 ```
 
 ##### Regressions
-```{r lm-regressions}
+###### Experimental
+```{r lm-regressions-experimental}
 # make nested list of pivoted dataframes. nested by dependent variable
-lm_data_list <- dfCoralRateAllEnvMean %>%
+lm_data_list_exp <- dfCoralRateAllEnvMean_exp %>%
   pivot_longer(cols = 8:22,
                names_to = "var_names",
                values_to = "var_values") %>%
@@ -267,7 +296,7 @@ lm_data_list <- dfCoralRateAllEnvMean %>%
   nest()
 
 # apply lm functions to their respective variable in the nested list
-lm_data_list <- lm_data_list %>%
+lm_data_list_exp <- lm_data_list_exp %>%
   mutate(lm_weight = map(data, func_lm_weight),
          lm_surface_area = map(data, func_lm_surface_area),
          lm_rgb = map(data, func_lm_rgb))
@@ -275,115 +304,225 @@ lm_data_list <- lm_data_list %>%
 # Grab Results
 #### weight ####
 # empty list to put lm weight results in
-lm_results_weight <- data.frame(environmental_variable = lm_data_list$var_names,
+lm_results_weight_exp <- data.frame(environmental_variable = lm_data_list_exp$var_names,
                                 p_value = NA,
                                 f_stat = NA,
                                 r_squared = NA, 
                                 estimate = NA)
-# loop through length of lm_results_weight and grab p-value, f statistic, and r^2 value for each model from lm_data_list 
-for (i in 1:length(lm_data_list$var_names)) {
+# loop through length of lm_results_weight_exp and grab p-value, f statistic, and r^2 value for each model from lm_data_list_exp 
+for (i in 1:length(lm_data_list_exp$var_names)) {
   # p value for i 
-  lm_results_weight$p_value[i] <- summary(lm_data_list$lm_weight[[i]])$coefficients[2,4]
+  lm_results_weight_exp$p_value[i] <- summary(lm_data_list_exp$lm_weight[[i]])$coefficients[2,4]
   # f stat for i 
-  lm_results_weight$f_stat[i] <- summary(lm_data_list$lm_weight[[i]])$fstatistic[1]
+  lm_results_weight_exp$f_stat[i] <- summary(lm_data_list_exp$lm_weight[[i]])$fstatistic[1]
   # r^2 for i
-  lm_results_weight$r_squared[i] <- summary(lm_data_list$lm_weight[[i]])$r.squared
+  lm_results_weight_exp$r_squared[i] <- summary(lm_data_list_exp$lm_weight[[i]])$r.squared
   # estimate for i
-  lm_results_weight$estimate[i] <- summary(lm_data_list$lm_weight[[i]])$coefficients[2]
+  lm_results_weight_exp$estimate[i] <- summary(lm_data_list_exp$lm_weight[[i]])$coefficients[2]
 }
 # round values to 4th decimal place 
-lm_results_weight <- lm_results_weight %>%
+lm_results_weight_exp <- lm_results_weight_exp %>%
   mutate(across(where(is.numeric), ~round(.x, digits = 4)))
 
 #### surface area ####
 # empty list to put lm surface area results in
-lm_results_surface_area <- data.frame(environmental_variable = lm_data_list$var_names,
+lm_results_surface_area_exp <- data.frame(environmental_variable = lm_data_list_exp$var_names,
                                       p_value = NA,
                                       f_stat = NA,
                                       r_squared = NA,
                                       estimate = NA)
-# loop through length of lm_results_surface_area and grab p-value, f statistic, and r^2 value for each model from lm_data_list 
-for (i in 1:length(lm_data_list$var_names)) {
+# loop through length of lm_results_surface_area_exp and grab p-value, f statistic, and r^2 value for each model from lm_data_list_exp 
+for (i in 1:length(lm_data_list_exp$var_names)) {
   # p value for i 
-  lm_results_surface_area$p_value[i] <- summary(lm_data_list$lm_surface_area[[i]])$coefficients[2,4]
+  lm_results_surface_area_exp$p_value[i] <- summary(lm_data_list_exp$lm_surface_area[[i]])$coefficients[2,4]
   # f stat for i 
-  lm_results_surface_area$f_stat[i] <- summary(lm_data_list$lm_surface_area[[i]])$fstatistic[1]
+  lm_results_surface_area_exp$f_stat[i] <- summary(lm_data_list_exp$lm_surface_area[[i]])$fstatistic[1]
   # r^2 for i
-  lm_results_surface_area$r_squared[i] <- summary(lm_data_list$lm_surface_area[[i]])$r.squared
+  lm_results_surface_area_exp$r_squared[i] <- summary(lm_data_list_exp$lm_surface_area[[i]])$r.squared
   # estimate for i
-  lm_results_surface_area$estimate[i] <- summary(lm_data_list$lm_surface_area[[i]])$coefficients[2]
+  lm_results_surface_area_exp$estimate[i] <- summary(lm_data_list_exp$lm_surface_area[[i]])$coefficients[2]
 }
 # round values to 4th decimal place 
-lm_results_surface_area <- lm_results_surface_area %>%
+lm_results_surface_area_exp <- lm_results_surface_area_exp %>%
   mutate(across(where(is.numeric), ~round(.x, digits = 4)))
 
 #### rgb ####
 # empty list to put lm rgb results in
-lm_results_rgb <- data.frame(environmental_variable = lm_data_list$var_names,
+lm_results_rgb_exp <- data.frame(environmental_variable = lm_data_list_exp$var_names,
                              p_value = NA,
                              f_stat = NA,
                              r_squared = NA,
                              estimate = NA)
-# loop through length of lm_results_rgb and grab p-value, f statistic, and r^2 value for each model from lm_data_list 
-for (i in 1:length(lm_data_list$var_names)) {
+# loop through length of lm_results_rgb_exp and grab p-value, f statistic, and r^2 value for each model from lm_data_list_exp 
+for (i in 1:length(lm_data_list_exp$var_names)) {
   # p value for i 
-  lm_results_rgb$p_value[i] <- summary(lm_data_list$lm_rgb[[i]])$coefficients[2,4]
+  lm_results_rgb_exp$p_value[i] <- summary(lm_data_list_exp$lm_rgb[[i]])$coefficients[2,4]
   # f stat for i 
-  lm_results_rgb$f_stat[i] <- summary(lm_data_list$lm_rgb[[i]])$fstatistic[1]
+  lm_results_rgb_exp$f_stat[i] <- summary(lm_data_list_exp$lm_rgb[[i]])$fstatistic[1]
   # r^2 for i
-  lm_results_rgb$r_squared[i] <- summary(lm_data_list$lm_rgb[[i]])$r.squared
+  lm_results_rgb_exp$r_squared[i] <- summary(lm_data_list_exp$lm_rgb[[i]])$r.squared
   # estimate for i
-  lm_results_rgb$estimate[i] <- summary(lm_data_list$lm_rgb[[i]])$coefficients[2]
+  lm_results_rgb_exp$estimate[i] <- summary(lm_data_list_exp$lm_rgb[[i]])$coefficients[2]
 }
 # round values to 4th decimal place 
-lm_results_rgb <- lm_results_rgb %>%
+lm_results_rgb_exp <- lm_results_rgb_exp %>%
   mutate(across(where(is.numeric), ~round(.x, digits = 4)))
 
 #### export results ####
 # prep lm dataframes to combine
 # weight
-lm_results_weight <- lm_results_weight %>%
+lm_results_weight_exp <- lm_results_weight_exp %>%
   add_column(dependent_variable = "weight_g_weekly", 
              .before = "environmental_variable") 
 # surface area
-lm_results_surface_area <- lm_results_surface_area %>%
+lm_results_surface_area_exp <- lm_results_surface_area_exp %>%
   add_column(dependent_variable = "surface_area_cm3_weekly",
              .before = "environmental_variable")
 # rgb
-lm_results_rgb <- lm_results_rgb %>%
+lm_results_rgb_exp <- lm_results_rgb_exp %>%
   add_column(dependent_variable = "rgb_weekly",
              .before = "environmental_variable")
 # combine dataframes
-lm_results_all <- rbind(lm_results_weight, lm_results_surface_area, lm_results_rgb) %>%
-  filter(p_value < 0.05)
+lm_results_exp <- rbind(lm_results_weight_exp, lm_results_surface_area_exp, lm_results_rgb_exp) %>%
+  filter(p_value < 0.05) %>%
+  mutate(r_squared = round(r_squared, digits = 2))
+
+
 # write excel file
-# write_xlsx(lm_results_all, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-LinearRegressions.xlsx")
+# write_xlsx(lm_results_exp, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-LinearRegressions-Experimental.xlsx")
 
 ```
 Significant Results: 
 Weight: 
-- Temperature
-- pH
-- ORP
-- Phycoerythrin
-- Nitrate MR: r^2 = 0.15
-- Silica: r^2 = 0.16
-- Iron: r^2 = 0.11
-- Calcium
+- ORP: r^2 = 0.14
+- Phycoerythrin: r^2 = 0.10
+- Nitrate MR: r^2 = 0.19
+- Silica: r^2 = 0.18
+- Calcium: r^2 = 0.12
 Surface area: 
 - Temperature
-- pH
-- Nitrate MR
+- Salinity
+- pH: r^2 = 0.11
+- ORP
+- Nitrate MR: r^2 = 0.13
 - Silica
+- Ammonia
 RGB: 
-- Temperature
 - Salinity 
-- pH
-- Silica
-- Iron
+- ORP
+- Phycoerythrin
+- Alkalinity
 - Calcium
 
 Quite a few variables have a significant linear relationship with weight, but none of them have a higher r^2 than 0.20, meaning that the relationships are fairly weak. 
+
+###### Control 
+```{r lm-regressions-experimental}
+# make nested list of pivoted dataframes. nested by dependent variable
+lm_data_list_control <- dfCoralRateAllEnvMean_control %>%
+  pivot_longer(cols = 8:22,
+               names_to = "var_names",
+               values_to = "var_values") %>%
+  group_by(var_names) %>%
+  nest()
+
+# apply lm functions to their respective variable in the nested list
+lm_data_list_control <- lm_data_list_control %>%
+  mutate(lm_weight = map(data, func_lm_weight),
+         lm_surface_area = map(data, func_lm_surface_area),
+         lm_rgb = map(data, func_lm_rgb))
+
+# Grab Results
+#### weight ####
+# empty list to put lm weight results in
+lm_results_weight_control <- data.frame(environmental_variable = lm_data_list_control$var_names,
+                                p_value = NA,
+                                f_stat = NA,
+                                r_squared = NA, 
+                                estimate = NA)
+# loop through length of lm_results_weight_control and grab p-value, f statistic, and r^2 value for each model from lm_data_list_control 
+for (i in 1:length(lm_data_list_control$var_names)) {
+  # p value for i 
+  lm_results_weight_control$p_value[i] <- summary(lm_data_list_control$lm_weight[[i]])$coefficients[2,4]
+  # f stat for i 
+  lm_results_weight_control$f_stat[i] <- summary(lm_data_list_control$lm_weight[[i]])$fstatistic[1]
+  # r^2 for i
+  lm_results_weight_control$r_squared[i] <- summary(lm_data_list_control$lm_weight[[i]])$r.squared
+  # estimate for i
+  lm_results_weight_control$estimate[i] <- summary(lm_data_list_control$lm_weight[[i]])$coefficients[2]
+}
+# round values to 4th decimal place 
+lm_results_weight_control <- lm_results_weight_control %>%
+  mutate(across(where(is.numeric), ~round(.x, digits = 4)))
+
+#### surface area ####
+# empty list to put lm surface area results in
+lm_results_surface_area_control <- data.frame(environmental_variable = lm_data_list_control$var_names,
+                                      p_value = NA,
+                                      f_stat = NA,
+                                      r_squared = NA,
+                                      estimate = NA)
+# loop through length of lm_results_surface_area_control and grab p-value, f statistic, and r^2 value for each model from lm_data_list_control 
+for (i in 1:length(lm_data_list_control$var_names)) {
+  # p value for i 
+  lm_results_surface_area_control$p_value[i] <- summary(lm_data_list_control$lm_surface_area[[i]])$coefficients[2,4]
+  # f stat for i 
+  lm_results_surface_area_control$f_stat[i] <- summary(lm_data_list_control$lm_surface_area[[i]])$fstatistic[1]
+  # r^2 for i
+  lm_results_surface_area_control$r_squared[i] <- summary(lm_data_list_control$lm_surface_area[[i]])$r.squared
+  # estimate for i
+  lm_results_surface_area_control$estimate[i] <- summary(lm_data_list_control$lm_surface_area[[i]])$coefficients[2]
+}
+# round values to 4th decimal place 
+lm_results_surface_area_control <- lm_results_surface_area_control %>%
+  mutate(across(where(is.numeric), ~round(.x, digits = 4)))
+
+#### rgb ####
+# empty list to put lm rgb results in
+lm_results_rgb_control <- data.frame(environmental_variable = lm_data_list_control$var_names,
+                             p_value = NA,
+                             f_stat = NA,
+                             r_squared = NA,
+                             estimate = NA)
+# loop through length of lm_results_rgb_control and grab p-value, f statistic, and r^2 value for each model from lm_data_list_control 
+for (i in 1:length(lm_data_list_control$var_names)) {
+  # p value for i 
+  lm_results_rgb_control$p_value[i] <- summary(lm_data_list_control$lm_rgb[[i]])$coefficients[2,4]
+  # f stat for i 
+  lm_results_rgb_control$f_stat[i] <- summary(lm_data_list_control$lm_rgb[[i]])$fstatistic[1]
+  # r^2 for i
+  lm_results_rgb_control$r_squared[i] <- summary(lm_data_list_control$lm_rgb[[i]])$r.squared
+  # estimate for i
+  lm_results_rgb_control$estimate[i] <- summary(lm_data_list_control$lm_rgb[[i]])$coefficients[2]
+}
+# round values to 4th decimal place 
+lm_results_rgb_control <- lm_results_rgb_control %>%
+  mutate(across(where(is.numeric), ~round(.x, digits = 4)))
+
+#### export results ####
+# prep lm dataframes to combine
+# weight
+lm_results_weight_control <- lm_results_weight_control %>%
+  add_column(dependent_variable = "weight_g_weekly", 
+             .before = "environmental_variable") 
+# surface area
+lm_results_surface_area_control <- lm_results_surface_area_control %>%
+  add_column(dependent_variable = "surface_area_cm3_weekly",
+             .before = "environmental_variable")
+# rgb
+lm_results_rgb_control <- lm_results_rgb_control %>%
+  add_column(dependent_variable = "rgb_weekly",
+             .before = "environmental_variable")
+# combine dataframes
+lm_results_control <- rbind(lm_results_weight_control, lm_results_surface_area_control, lm_results_rgb_control) %>%
+  filter(p_value < 0.05) %>%
+  mutate(r_squared = round(r_squared, digits = 2))
+
+
+# write excel file
+# write_xlsx(lm_results_all, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-LinearRegressions-Control.xlsx")
+
+```
 
 #### Weighted Least Squares Regression
 This is a form of linear regression that places more weight on the observations with smaller error variance. To see which variables require this test, we will first run a Breusch-Pagan test to see if there is homoscedasticity in the residuals. If the test has a p-value < 0.05, then there is homoscedasticity. If homoscedasticity is present, then we will run the weighted least squares regression. Otherwise, the unweighted linear regression is fine. 

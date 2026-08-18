@@ -63,8 +63,9 @@ df_edit <- df %>%
                        names = c("colony_number", "fragment_number"), 
                        cols_remove = FALSE) %>%
   # create column labeling each fragment as an experimental or control frag
-  mutate(Treatment = ifelse(fragment_number == 4, "Control", Treatment),
-         Trial = ifelse(Treatment == "Control", "Control", paste(Treatment, Trial)),
+  mutate(Trial = ifelse(fragment_number == 4, 
+                        paste(Treatment, Trial, "Control"), paste(Treatment, Trial)),
+         Treatment = ifelse(fragment_number == 4, "Control", Treatment),
          frag_id = paste(Species, Fragment, sep = " "), 
          weight_g = as.numeric(Weight_g),
          surface_area_mean_cm3 = as.numeric(Surface_Area_Mean_cm3),

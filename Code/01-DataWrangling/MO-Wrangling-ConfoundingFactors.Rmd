@@ -257,8 +257,25 @@ dfAllEnvVar <- data.frame(Date = seq.Date(from = as.Date("2024-05-29"), to = as.
   select(-trial_num) %>%
   filter(is.na(Trial) == FALSE) %>%
   # add DLI PBR2 value - only one day was recorded and it got lost in the wrangling
-  mutate(DLI = ifelse(Trial == "PBR 2", 0.10036601000, DLI)) 
-                   
+  mutate(DLI = ifelse(Trial == "PBR 2", 0.10036601000, DLI)) %>%
+  # differentiate Control by Trial
+  mutate(Trial = ifelse(Treatment == "Control" & Date >= "2024-05-29" & Date < "2024-06-17", 
+                        "PBR 1 Control", Trial),
+         Trial = ifelse(Treatment == "Control" & Date >= "2024-06-17" & Date < "2024-07-09", 
+                        "PBC 1  Control", Trial),
+         Trial = ifelse(Treatment == "Control" & Date >= "2024-07-09" & Date < "2024-07-29", 
+                        "PBR 2  Control", Trial),
+         Trial = ifelse(Treatment == "Control" & Date >= "2024-09-30" & Date < "2024-11-11", 
+                        "PBR 3  Control", Trial),
+         Trial = ifelse(Treatment == "Control" & Date >= "2024-11-11" & Date < "2024-12-20", 
+                        "PBC 2  Control", Trial),
+         Trial = ifelse(Treatment == "Control" & Date >= "2024-12-20" & Date < "2025-02-03", 
+                        "PBR 4  Control", Trial),
+         Trial = ifelse(Treatment == "Control" & Date >= "2025-02-03" & Date <= "2025-03-17", 
+                        "PBC 3  Control", Trial)) %>%
+  # remove dates between summer and fall trials that made it in 
+  filter(Trial != "Control")
+
 
 # long version of dfAllEnvVar
 dfAllEnvVar_long <- dfAllEnvVar %>%
