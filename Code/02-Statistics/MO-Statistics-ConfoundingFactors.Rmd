@@ -337,18 +337,18 @@ dfCoralRateAllEnvMean_exp <- dfCoral_rates %>%
 ```
 
 #### Control
-```{r env-fact-infl-data-setup-experimental}
+```{r env-fact-infl-data-setup-control}
 # mean environmental variable per trial
 dfAllEnvVar_mean_control <- dfAllEnvVar %>%
   filter(Treatment == "Control") %>%
-  group_by(Treatment, Trial) %>%
+  group_by(Trial) %>%
   summarise(across(where(is.numeric), ~ mean(.x, na.rm = TRUE)))
 
 # combine with coral data 
 dfCoralRateAllEnvMean_control <- dfCoral_rates %>%
   filter(Treatment == "Control") %>%
   left_join(dfAllEnvVar_mean_control) %>%
-  mutate(Trial = factor(Trial, levels = c("Control")))
+  mutate(Trial = factor(Trial, levels = c("PBR 1 Control", "PBC 1 Control", "PBR 2 Control", "PBR 3 Control", "PBC 2 Control", "PBC 3 Control")))
 
 ```
 
@@ -643,9 +643,10 @@ func_wls_rgb <- function(df) {
 ```
 
 ##### Prepare Data
-```{r wls-data-prep}
+###### Experimental 
+```{r wls-data-prep-experimental}
 # add residuals for each model 
-lm_data_list <- lm_data_list %>%
+lm_data_list_exp <- lm_data_list_exp %>%
   mutate(resids_weight = map2(data, lm_weight, add_residuals),
          resids_surface_area = map2(data, lm_surface_area, add_residuals),
          resids_rgb = map2(data, lm_rgb, add_residuals),
@@ -655,21 +656,21 @@ lm_data_list <- lm_data_list %>%
 
 # unnest and separate into dataframes based on dependent variable then re-nest by environmental variable to prep for WLS regressions in next step
 # weight
-lm_resids_weight <- unnest(lm_data_list, resids_weight, fit_vals_weight) %>%
+lm_resids_weight_exp <- unnest(lm_data_list_exp, resids_weight, fit_vals_weight) %>%
   select(var_names, weight_g_weekly, var_values, resid, pred) %>%
   na.omit() %>%
   group_by(var_names) %>%
   nest()
 
 # surface area
-lm_resids_surface_area <- unnest(lm_data_list, resids_surface_area, fit_vals_surface_area) %>%
+lm_resids_surface_area_exp <- unnest(lm_data_list_exp, resids_surface_area, fit_vals_surface_area) %>%
   select(var_names, surface_area_cm3_weekly, var_values, resid, pred) %>%
   na.omit() %>%
   group_by(var_names) %>%
   nest()
 
 # rgb
-lm_resids_rgb <- unnest(lm_data_list, resids_rgb, fit_vals_rgb) %>%
+lm_resids_rgb_exp <- unnest(lm_data_list_exp, resids_rgb, fit_vals_rgb) %>%
   select(var_names, rgb_weekly, var_values, resid, pred) %>%
   na.omit() %>%
   group_by(var_names) %>%
@@ -682,11 +683,11 @@ lm_resids_rgb <- unnest(lm_data_list, resids_rgb, fit_vals_rgb) %>%
 Perform wls regressions for each environmental variable in each dependent variable and output results: estimate, degrees of freedom (df), residual degrees of freedom (rdf), standard error (se), residual standard error (rse), F statistic (f_stat), r^2, p-value.
 ```{r wls}
 #### weight ####
-wls_list_weight <- lm_resids_weight %>%
+wls_list_weight_exp <- lm_resids_weight_exp %>%
   mutate(wls = map(data, func_wls_weight))
 
 # empty list to put wls weight results in
-wls_results_weight <- data.frame(environmental_variable = wls_list_weight$var_names,
+wls_results_weight_exp <- data.frame(environmental_variable = wls_list_weight_exp$var_names,
                                  estimate = NA,
                                  df = NA,
                                  rdf = NA,
@@ -696,36 +697,36 @@ wls_results_weight <- data.frame(environmental_variable = wls_list_weight$var_na
                                  r_squared = NA,
                                  p_value = NA
                                  )
-# loop through length of wls_results_weight and grab p-value, f statistic, and r^2 value for each model from wls_list_weight 
-for (i in 1:length(wls_list_weight$var_names)) {
+# loop through length of wls_results_weight_exp and grab p-value, f statistic, and r^2 value for each model from wls_list_weight_exp 
+for (i in 1:length(wls_list_weight_exp$var_names)) {
   # estimate for i
-  wls_results_weight$estimate[i] <- summary(wls_list_weight$wls[[i]])$coefficients[2]
+  wls_results_weight_exp$estimate[i] <- summary(wls_list_weight_exp$wls[[i]])$coefficients[2]
   # degrees of freedom for i
-  wls_results_weight$df[i] <- summary(wls_list_weight$wls[[i]])$df[1]
+  wls_results_weight_exp$df[i] <- summary(wls_list_weight_exp$wls[[i]])$df[1]
   # residual degrees of freedom for i 
-  wls_results_weight$rdf[i] <- summary(wls_list_weight$wls[[i]])$df[2]
+  wls_results_weight_exp$rdf[i] <- summary(wls_list_weight_exp$wls[[i]])$df[2]
   # standard error for i
-  wls_results_weight$se[i] <-summary(wls_list_weight$wls[[i]])$coefficients[2, "Std. Error"]
+  wls_results_weight_exp$se[i] <-summary(wls_list_weight_exp$wls[[i]])$coefficients[2, "Std. Error"]
   # residual standard error for i
-  wls_results_weight$rse[i] <-summary(wls_list_weight$wls[[i]])$sigma
+  wls_results_weight_exp$rse[i] <-summary(wls_list_weight_exp$wls[[i]])$sigma
   # f stat for i 
-  wls_results_weight$f_stat[i] <- summary(wls_list_weight$wls[[i]])$fstatistic[1]
+  wls_results_weight_exp$f_stat[i] <- summary(wls_list_weight_exp$wls[[i]])$fstatistic[1]
   # r^2 for i
-  wls_results_weight$r_squared[i] <- summary(wls_list_weight$wls[[i]])$r.squared
+  wls_results_weight_exp$r_squared[i] <- summary(wls_list_weight_exp$wls[[i]])$r.squared
   # p value for i 
-  wls_results_weight$p_value[i] <- summary(wls_list_weight$wls[[i]])$coefficients[2,4]
+  wls_results_weight_exp$p_value[i] <- summary(wls_list_weight_exp$wls[[i]])$coefficients[2,4]
 }
 # round values to 4th decimal place 
-wls_results_weight <- wls_results_weight %>%
+wls_results_weight_exp <- wls_results_weight_exp %>%
   mutate(across(where(is.numeric), ~round(.x, digits = 4)))
 
 
 #### surface area ####
-wls_list_surface_area <- lm_resids_surface_area %>%
+wls_list_surface_area_exp <- lm_resids_surface_area_exp %>%
   mutate(wls = map(data, func_wls_surface_area))
 
 # empty list to put wls weight results in
-wls_results_surface_area <- data.frame(environmental_variable = wls_list_surface_area$var_names,
+wls_results_surface_area_exp <- data.frame(environmental_variable = wls_list_surface_area_exp$var_names,
                                        estimate = NA,
                                        df = NA,
                                        rdf = NA,
@@ -734,36 +735,36 @@ wls_results_surface_area <- data.frame(environmental_variable = wls_list_surface
                                        f_stat = NA,
                                        r_squared = NA,
                                        p_value = NA)
-# loop through length of wls_results_surface_area and grab p-value, f statistic, and r^2 value for each model from wls_list_surface_area 
-for (i in 1:length(wls_list_surface_area$var_names)) {
+# loop through length of wls_results_surface_area_exp and grab p-value, f statistic, and r^2 value for each model from wls_list_surface_area_exp 
+for (i in 1:length(wls_list_surface_area_exp$var_names)) {
   # estimate for i
-  wls_results_surface_area$estimate[i] <- summary(wls_list_surface_area$wls[[i]])$coefficients[2]
+  wls_results_surface_area_exp$estimate[i] <- summary(wls_list_surface_area_exp$wls[[i]])$coefficients[2]
   # degrees of freedom for i
-  wls_results_surface_area$df[i] <- summary(wls_list_surface_area$wls[[i]])$df[1]
+  wls_results_surface_area_exp$df[i] <- summary(wls_list_surface_area_exp$wls[[i]])$df[1]
   # residual degrees of freedom for i 
-  wls_results_surface_area$rdf[i] <- summary(wls_list_surface_area$wls[[i]])$df[2]
+  wls_results_surface_area_exp$rdf[i] <- summary(wls_list_surface_area_exp$wls[[i]])$df[2]
   # standard error for i
-  wls_results_surface_area$se[i] <-summary(wls_list_surface_area$wls[[i]])$coefficients[2, "Std. Error"]
+  wls_results_surface_area_exp$se[i] <-summary(wls_list_surface_area_exp$wls[[i]])$coefficients[2, "Std. Error"]
   # residual standard error for i
-  wls_results_surface_area$rse[i] <-summary(wls_list_surface_area$wls[[i]])$sigma
+  wls_results_surface_area_exp$rse[i] <-summary(wls_list_surface_area_exp$wls[[i]])$sigma
   # f stat for i 
-  wls_results_surface_area$f_stat[i] <- summary(wls_list_surface_area$wls[[i]])$fstatistic[1]
+  wls_results_surface_area_exp$f_stat[i] <- summary(wls_list_surface_area_exp$wls[[i]])$fstatistic[1]
   # r^2 for i
-  wls_results_surface_area$r_squared[i] <- summary(wls_list_surface_area$wls[[i]])$r.squared
+  wls_results_surface_area_exp$r_squared[i] <- summary(wls_list_surface_area_exp$wls[[i]])$r.squared
   # p value for i 
-  wls_results_surface_area$p_value[i] <- summary(wls_list_surface_area$wls[[i]])$coefficients[2,4]
+  wls_results_surface_area_exp$p_value[i] <- summary(wls_list_surface_area_exp$wls[[i]])$coefficients[2,4]
 }
 # round values to 4th decimal place 
-wls_results_surface_area <- wls_results_surface_area %>%
+wls_results_surface_area_exp <- wls_results_surface_area_exp %>%
   mutate(across(where(is.numeric), ~round(.x, digits = 4)))
 
 
 #### rgb ####
-wls_list_rgb <- lm_resids_rgb %>%
+wls_list_rgb_exp <- lm_resids_rgb_exp %>%
   mutate(wls = map(data, func_wls_rgb))
 
 # empty list to put wls weight results in
-wls_results_rgb <- data.frame(environmental_variable = wls_list_rgb$var_names,
+wls_results_rgb_exp <- data.frame(environmental_variable = wls_list_rgb_exp$var_names,
                               estimate = NA,
                               df = NA,
                               rdf = NA,
@@ -772,90 +773,85 @@ wls_results_rgb <- data.frame(environmental_variable = wls_list_rgb$var_names,
                               f_stat = NA,
                               r_squared = NA,
                               p_value = NA)
-# loop through length of wls_results_rgb and grab p-value, f statistic, and r^2 value for each model from wls_list_rgb 
-for (i in 1:length(wls_list_rgb$var_names)) {
+# loop through length of wls_results_rgb_exp and grab p-value, f statistic, and r^2 value for each model from wls_list_rgb_exp 
+for (i in 1:length(wls_list_rgb_exp$var_names)) {
   # estimate for i
-  wls_results_rgb$estimate[i] <- summary(wls_list_rgb$wls[[i]])$coefficients[2]
+  wls_results_rgb_exp$estimate[i] <- summary(wls_list_rgb_exp$wls[[i]])$coefficients[2]
   # degrees of freedom for i
-  wls_results_rgb$df[i] <- summary(wls_list_rgb$wls[[i]])$df[1]
+  wls_results_rgb_exp$df[i] <- summary(wls_list_rgb_exp$wls[[i]])$df[1]
   # residual degrees of freedom for i 
-  wls_results_rgb$rdf[i] <- summary(wls_list_rgb$wls[[i]])$df[2]
+  wls_results_rgb_exp$rdf[i] <- summary(wls_list_rgb_exp$wls[[i]])$df[2]
   # standard error for i
-  wls_results_rgb$se[i] <-summary(wls_list_rgb$wls[[i]])$coefficients[2, "Std. Error"]
+  wls_results_rgb_exp$se[i] <-summary(wls_list_rgb_exp$wls[[i]])$coefficients[2, "Std. Error"]
   # residual standard error for i
-  wls_results_rgb$rse[i] <-summary(wls_list_rgb$wls[[i]])$sigma
+  wls_results_rgb_exp$rse[i] <-summary(wls_list_rgb_exp$wls[[i]])$sigma
   # f stat for i 
-  wls_results_rgb$f_stat[i] <- summary(wls_list_rgb$wls[[i]])$fstatistic[1]
+  wls_results_rgb_exp$f_stat[i] <- summary(wls_list_rgb_exp$wls[[i]])$fstatistic[1]
   # r^2 for i
-  wls_results_rgb$r_squared[i] <- summary(wls_list_rgb$wls[[i]])$r.squared
+  wls_results_rgb_exp$r_squared[i] <- summary(wls_list_rgb_exp$wls[[i]])$r.squared
   # p value for i 
-  wls_results_rgb$p_value[i] <- summary(wls_list_rgb$wls[[i]])$coefficients[2,4]
+  wls_results_rgb_exp$p_value[i] <- summary(wls_list_rgb_exp$wls[[i]])$coefficients[2,4]
 }
 # round values to 4th decimal place 
-wls_results_rgb <- wls_results_rgb %>%
+wls_results_rgb_exp <- wls_results_rgb_exp %>%
   mutate(across(where(is.numeric), ~round(.x, digits = 4)))
 
 #### Export Results ####
 # prep lm dataframes to combine
 # weight
-wls_results_weight <- wls_results_weight %>%
+wls_results_weight_exp <- wls_results_weight_exp %>%
   add_column(dependent_variable = "weight_g_weekly", 
              .before = "environmental_variable") 
 # surface area
-wls_results_surface_area <- wls_results_surface_area %>%
+wls_results_surface_area_exp <- wls_results_surface_area_exp %>%
   add_column(dependent_variable = "surface_area_cm3_weekly",
              .before = "environmental_variable")
 # rgb
-wls_results_rgb <- wls_results_rgb %>%
+wls_results_rgb_exp <- wls_results_rgb_exp %>%
   add_column(dependent_variable = "rgb_weekly",
              .before = "environmental_variable")
 # combine dataframes
-wls_results_all <- rbind(wls_results_weight, wls_results_surface_area, wls_results_rgb) %>%
+wls_results_exp <- rbind(wls_results_weight_exp, wls_results_surface_area_exp, wls_results_rgb_exp) %>%
+  mutate(r_squared = round(r_squared, digits = 2)) %>%
   filter(p_value < 0.05)
 
 # write excel file
-# write_xlsx(wls_results_all, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-WeightedLeastSquareRegressions.xlsx")
+# write_xlsx(wls_results_exp, "OutputData/ConfoundingFactors/ConfoundingFactorTesting-WeightedLeastSquareRegressions-Experimental.xlsx")
 
 
 ```
 Significant Results: 
 Weight: 
-- Temperature
-- pH
-- ORP
-- Phycoerytherin 
-- Nitrate MR: r^2 = 0.18
-- Silica: r^2 = 0.18
-- Iron
-- Calcium 
-Surface Area: r^2 all 0.10 or less 
-- Temperature
-- Nitrate 
-- Alkalinity 
-- Silica
-- Ammonia
+  - Temperature
+  - Salinity 
+  - pH: r^2 = 0.23
+  - ORP
+  - Phycoerytherin 
+  - Nitrate MR: r^2 = 0.22
+  - Alkalinity 
+  - Silica
+  - Calcium 
+Surface Area
+  - Temperature: r^2 = 0.11
+  - Salinity
+  - pH
+  - ORP
+  - Nitrate 
+  - Silica
+  - Ammonia
 RGB: r^2 all 0.10 or less 
-- Temperature
-- Salinity 
-- pH
-- Silica
-- Iron
-- Calcium
+  - Salinity 
+  - ORP
+  - Phycoerythrin
+  - Alkalinity
+  - Calcium
 
-Quite a few variables have a significant linear relationship with weight, but none of them have a higher r^2 than 0.20, meaning that the relationships are fairly weak. 
 
 
 #### Weighted Multiple Linear Regression
 Instead of looking at how each environmental variable individually affected the dependent varaibles, a multiple linear regression will add in the effects from multiple environmental variables. 
 
-##### Prepare Data
-The weighted data will only work if every variable has the same amount of data. DLI, Alkalinity, Silica, and Iron all have missing values. DLI is missing Control, Alkalinity is missing PBR 1, and Silica and Iron are missing PBC 2, PBC 3, and PBR 3. 
-```{r wls-mult-data-prep}
-# remove Control treatment bc dli doesnt have a control unfortunately 
-dfCoralRateAllEnvMean_ex <- dfCoralRateAllEnvMean %>%
-  filter(Treatment != "Control")
-
-```
+The weighted data will only work if every variable has the same amount of data. DLI, Alkalinity, Silica, and Iron all have missing values. Alkalinity is missing PBR 1 and Silica and Iron are missing PBC 2, PBC 3, and PBR 3. 
 
 ##### Regression
 ```{r wls-mult}
@@ -880,19 +876,17 @@ dfCoralRateAllEnvMean_ex <- dfCoralRateAllEnvMean %>%
 # weight 
 # fit ordinary least squares model 
 ## all variables 
-ols_mult_fit <- lm(weight_g_weekly ~ `Temperature (ºC)` + `Salinity (PSU)` + pH +
-                     `ORP (mV)` + `Chlorophyll (RFU)` + `Phycoerythrin (RFU)` + 
-                     DLI + Turbidity + Phosphate + `Nitrate MR` + Ammonia + Calcium,
-                   data = dfCoralRateAllEnvMean)
+ols_mult_fit <- lm(weight_g_weekly ~ `Temperature (ºC)` + `Salinity (PSU)` + pH + `ORP (mV)` + `Phycoerythrin (RFU)`+ DLI + `Nitrate MR` + Calcium,
+                   data = dfCoralRateAllEnvMean_exp)
+
+# `Temperature (ºC)` + `Salinity (PSU)` + pH + `ORP (mV)` + `Chlorophyll (RFU)` + `Phycoerythrin (RFU)` + DLI + Turbidity + Phosphate + Nitrate MR + Ammonia + Calcium
 
 # calculate weights based on residual variance 
 wts <- 1/ fitted(lm(abs(residuals(ols_mult_fit)) ~ fitted(ols_mult_fit)))^2
 
 # fit weighted least squares model
-wls_mult_fit <- lm(weight_g_weekly ~ `Temperature (ºC)` + `Salinity (PSU)` + pH +
-                     `ORP (mV)` + `Chlorophyll (RFU)` + `Phycoerythrin (RFU)` + 
-                     DLI + Turbidity + Phosphate + `Nitrate MR` + Ammonia + Calcium,
-                   data = dfCoralRateAllEnvMean,
+wls_mult_fit <- lm(weight_g_weekly ~ `Temperature (ºC)` + `Salinity (PSU)` + pH + `ORP (mV)` + `Phycoerythrin (RFU)`+ DLI + `Nitrate MR` + Calcium,
+                   data = dfCoralRateAllEnvMean_exp,
                    weights = wts)
 
 summary(wls_mult_fit)
