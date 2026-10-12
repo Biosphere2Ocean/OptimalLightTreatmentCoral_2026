@@ -11,7 +11,7 @@ editor_options:
 ---
 
 Input: 
-  `CoralColorWeightData_Rates.csv`: made as output in `MO-Wrangling-PERMANOVA.Rmd`, coral weight, surface area, and rgb (color) data as weekly rate of change per trial; one data point per coral per trial indicating the total change in response variable per trial
+  `CoralColorWeightData_Rates.csv`: made as output in `MO-Wrangling-PERMANOVA.Rmd`, coral weight, surface area, and pigmentation (color) data as weekly rate of change per trial; one data point per coral per trial indicating the total change in response variable per trial
   
 Output: 
   `MOStats_PERMANOVA_SingleIndependent.xlsx`: results of running a single PERMANOVA with no interactions between the independent variables. 
@@ -42,7 +42,9 @@ options(dplyr.summarise.inform = FALSE)
 ```{r import-data}
 df_rates <- read_csv("InputData/Clean/CoralData/CoralColorWeightData_Rates.csv") %>%
   # get rid of trial PBR 4 due to light timer malfunction keeping lights on continuously for 10 days
-  filter(Trial != "PBR 4")
+  filter(Trial != "PBR 4") %>%
+  # add Colony 
+  mutate(colony_id = substring(frag_id, first = 6, last = 6), .after = frag_id)
 
 ```
 
@@ -83,7 +85,7 @@ df_rates %>%
         panel.grid.minor = element_blank(),
         panel.background = element_blank())
 
-# RGB
+# pigmentation (rgb values)
 df_rates %>%
   ggplot(aes(x = rgb_weekly,
              fill = Treatment,
@@ -140,7 +142,7 @@ df_rates %>%
         panel.grid.minor = element_blank(),
         panel.background = element_blank())
 
-# rgb
+# pigmentation (rgb values)
 df_rates %>%
   ggplot(aes(x = rgb_weekly,
              fill = Treatment,
@@ -162,7 +164,11 @@ df_rates %>%
 ```
 
 # PERMANOVAs
-Run non-parametric multivariate analysis of variance (NPMANOVA), also known as permutational multivariate analysis of variance (PERMANOVA), using weight, surface area, and RGB as dependent variables and Treatment, Trial, and Species as independent/grouping/factor variables. The goal here is to see if there is a significant difference in the variance of the dependent variables as grouped by the independent variables. First we'll test Treatment, then Species, then Treatment and Species. 
+Run non-parametric multivariate analysis of variance (NPMANOVA), also known as permutational multivariate analysis of variance (PERMANOVA), using weight, surface area, and pigmentation (RGB values) as dependent variables and Treatment, Trial, and Species as independent/grouping/factor variables. For a One-Way PERMANOVA, the null hypothesis  is that the centroids of all groups being tested reside in the same place in multivariate space. A centroid is the multivariate mean position of a group of samples mapped in multidimensional space defined by a distance matrix - think of a 3D cluster or ball. We are testing to see if the clusters for all groups are in the same space (null hypothesis), or if they are in significantly different areas in space from each other (alternate hypothesis). As an omnibus test (first line of testing), rejecting the null on a one-way PERMANOVA only tells us that at least one group is significantly different. It doesn't give specifics, for example, if every level differs from every other, or if there is one level that differs from the rest.   
+
+First we'll run a one-way PERMANOVA testing Treatment (do the weight, surface area, and pigmentation values cluster in the same space for all treatments?), then Species (do the weight, surface area, and pigmentation values cluster in the same space for all species?), then Treatment and Species (do the weight, surface area, and pigmentation values cluster in the same space for all treatments and species?). 
+
+If we get significant differences from the one-way test, then we will run post hoc tests of pairwise PERMANOVAs and Tukey Tests. 
 
 Note: we are using euclidean distance instead of curtis-bray distance due to having negative values in our dependent data. 
 
@@ -170,7 +176,7 @@ We will also need to set the seed for the number generator used within the PERMA
 
 On the F Statistic: "When the F value is large, it indicates that the differences in group means are substantially greater than what could be expected due to random variation alone. Conversely, a small F value suggests that the observed differences in means are likely attributable to chance fluctuations within the groups." (<https://www.6sigma.us/six-sigma-in-focus/anova-f-value-meaning/>)
 
-## Single PERMANOVAs
+## One-Way PERMANOVAs
 ### Set-up
 Make a dataframe holding just the dependent variables.
 ```{r permanova-setup}
@@ -185,13 +191,32 @@ Test the effects of each factor variable on the dependent data independently of 
 # set seed for permutations so that they are reproducible 
 set.seed(100)
 
+# trial
+adonis2(y ~ df_rates$Trial, 
+                            method = "euclidean", 
+                            strata = df_rates$colony_id)
+
+# treatment 
+adonis2(y ~ df_rates$Treatment, 
+                            method = "euclidean", 
+                            strata = df_rates$Trial)
+
+# species 
+adonis2(y ~ df_rates$Species, 
+                            method = "euclidean", 
+                            strata = df_rates$colony_id)
+
 # regress y on Trial, Species, Treatment
-perm_independent <- adonis2(y ~ df_rates$Species + df_rates$Treatment + df_rates$Trial, 
-                            method = "euclidean")
+# perm_independent <- 
+adonis2(y ~ df_rates$Species + df_rates$Treatment,
+        method = "euclidean", 
+        strata = df_rates$colony_id)
+
+# perm_independent
 
 # add column with row names that will print out nicely
-df_perm_independent <- perm_independent %>%
-  mutate(ModelNames = rownames(perm_independent), .before = Df)
+# df_perm_independent <- perm_independent %>%
+#   mutate(ModelNames = rownames(perm_independent), .before = Df)
 
 # make excel file of results
 #write.xlsx(x = df_perm_independent, file = "OutputData/StatisticsResults/MOStats_PERMANOVA_SingleIndependent.xlsx")
@@ -215,6 +240,7 @@ Trial:
 Residual R^2 = 0.74348694
 
 There is a significant difference in dependent variable variance based on Treatment, Species, and Trial independently of each other. Run `view(perm_independent)` to see full table of results. 
+
 
 ### Test Interaction Between Terms
 ```{r permanova-interaction-terms}
@@ -264,10 +290,11 @@ There is a significant difference in dependent variable variance based on Treatm
 
 NOTE: Treatment*Trial was automatically removed due to high multicollinearity, meaning that the variables are very highly correlated, which makes it difficult for the model to discern their individual impacts. Run `view(perm_interaction)` to see full table of results.
 
-## Pairwise PERMANOVAs
-Next we'll perform pairwise PERMANOVAs to see if there is a significant difference in the variance of the dependent variables as grouped by the specific levels of the independent variables. First we'll test Treatment, then Species, then Treatment and Species.
+## Post Hoc Tests
+### Pairwise PERMANOVAs
+Next we'll perform pairwise PERMANOVAs to see exactly which groups are significantly different from each other. First we'll test Treatment, then Species, then Treatment and Species.
 
-### Setup
+#### Setup
 ```{r pairwise-permanova-setup-1}
 # R sometimes has trouble with assigning proper formats to variables so this sets it as a factor (the proper format)
 df_rates$Species <- as.factor(df_rates$Species)
@@ -278,8 +305,8 @@ df_rates$Trial <- as.factor(df_rates$Trial)
 y <- df_rates[, c("weight_g_weekly", "surface_area_cm3_weekly", "rgb_weekly")]
 ```
 
-### Test Terms Independently
-#### Species
+#### Test Terms Independently
+##### Species
 ```{r pairwise-permanova-independent-species}
 # set seed for permutations so that they are reproducible 
 set.seed(100)
@@ -343,7 +370,7 @@ Ofav vs Pcli:
   - F = 6.759
   - R^2 = 0.04396
 
-#### Treatment
+##### Treatment
 ```{r pairwise-permanova-independent-treatment}
 # set seed for permutations so that they are reproducible 
 set.seed(100)
@@ -408,7 +435,7 @@ PBR vs PBC:
   - R^2 = 0.0068
 
   
-#### Trial
+##### Trial
 ```{r pairwise-permanova-independent-trial}
 # set seed for permutations so that they are reproducible 
 set.seed(100)
@@ -523,7 +550,7 @@ Significant Results:
       - F = 11.2000
       - R^2 = 0.1772
 
-#### All Pairwise PERMANOVA Results 
+##### All Pairwise PERMANOVA Results 
 ```{r pairwise-permanova-results-all}
 # combine all pairwise permanova results into one data frame
 dfPairPermAll <- rbind(df_PermPairSpecies, df_PermPairTreatment, df_PermPairTrial)
@@ -533,10 +560,10 @@ dfPairPermAll <- rbind(df_PermPairSpecies, df_PermPairTreatment, df_PermPairTria
 
 ```
 
-# Post Hoc Tests: Tukey
+## Tukey Tests
 For each of the 3 response variables, we are going to run Tukey's Honest Significant Difference (Tukey HSD) test on all 3 independent variables and their significant interactions from the single PERMANOVAs: Species, Trial, Treatment, Species:Treatment, and Species:Trial. 
 
-## Data Set-Up
+### Data Set-Up
 ```{r post-hoc-tukey-data-setup}
 # set up data frame for tukey testing 
 df_rates_long <- df_rates %>%
@@ -546,7 +573,7 @@ df_rates_long <- df_rates %>%
 
 ```
 
-## Run Tukey Test
+### Run Tukey Test
 ```{r tukey-test-treatment-species}
 tukey_treat_tri_spec <- df_rates_long %>%
   group_by(dependent_variable_names) %>%
@@ -562,8 +589,8 @@ tukey_treat_tri_spec
 
 ```
 
-## Degrees of Freedom
-### Weight
+### Degrees of Freedom
+#### Weight
 ```{r post-hoc-tukey-extra-stats}
 summary(aov(weight_g_weekly ~ Treatment * Species * Trial, data = df_rates))
 ```
