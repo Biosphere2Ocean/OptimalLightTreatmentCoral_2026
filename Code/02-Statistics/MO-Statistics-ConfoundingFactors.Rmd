@@ -38,6 +38,8 @@ library(rstatix)
 library(lubridate)
 library(lmtest)
 library(modelr)
+library(car)
+library(vegan)
 library(ggpubr)
 # get rid of scientific notation
 options(scipen = 9999)
@@ -873,31 +875,105 @@ The weighted data will only work if every variable has the same amount of data. 
 # summary(wls_fit)
 
 
-# weight 
+
+#### weight #### 
 # fit ordinary least squares model 
 ## all variables 
-ols_mult_fit <- lm(weight_g_weekly ~ `Temperature (ºC)` + `Salinity (PSU)` + pH + `ORP (mV)` + `Phycoerythrin (RFU)`+ DLI + `Nitrate MR` + Calcium,
+ols_mult_fit_weight <- lm(weight_g_weekly ~ `Temperature (ºC)` + DLI,
                    data = dfCoralRateAllEnvMean_exp)
 
-# `Temperature (ºC)` + `Salinity (PSU)` + pH + `ORP (mV)` + `Chlorophyll (RFU)` + `Phycoerythrin (RFU)` + DLI + Turbidity + Phosphate + Nitrate MR + Ammonia + Calcium
+# `Temperature (ºC)` + `Salinity (PSU)` + pH + `ORP (mV)` + `Chlorophyll (RFU)` + `Phycoerythrin (RFU)` + DLI + Turbidity + Phosphate + `Nitrate MR` + Ammonia + Calcium
 
 # calculate weights based on residual variance 
-wts <- 1/ fitted(lm(abs(residuals(ols_mult_fit)) ~ fitted(ols_mult_fit)))^2
+wts_weight <- 1/ fitted(lm(abs(residuals(ols_mult_fit_weight)) ~ fitted(ols_mult_fit_weight)))^2
 
 # fit weighted least squares model
-wls_mult_fit <- lm(weight_g_weekly ~ `Temperature (ºC)` + `Salinity (PSU)` + pH + `ORP (mV)` + `Phycoerythrin (RFU)`+ DLI + `Nitrate MR` + Calcium,
+wls_mult_fit_weight <- lm(weight_g_weekly ~ `Temperature (ºC)` + DLI,
                    data = dfCoralRateAllEnvMean_exp,
-                   weights = wts)
+                   weights = wts_weight)
 
-summary(wls_mult_fit)
+# check for multicollinearity 
+# vif(wls_mult_fit_weight)
+# alias() shows that temperature, salinity, pH, ORP, and Chlorophyll show perfect multicollinearity. just keep one for the regressions: temperature
+# alias(wls_mult_fit_weight)
+
+summary(wls_mult_fit_weight)
+
+
+#### surface area ####
+# fit ordinary least squares model 
+## all variables 
+ols_mult_fit_surface_area <- lm(surface_area_cm3_weekly ~ `Temperature (ºC)` + DLI,
+                   data = dfCoralRateAllEnvMean_exp)
+
+# `Temperature (ºC)` + `Salinity (PSU)` + pH + `ORP (mV)` + `Chlorophyll (RFU)` + `Phycoerythrin (RFU)` + DLI + Turbidity + Phosphate + `Nitrate MR` + Ammonia + Calcium
+
+# calculate weights based on residual variance 
+wts_surface_area <- 1/ fitted(lm(abs(residuals(ols_mult_fit_surface_area)) ~ fitted(ols_mult_fit_surface_area)))^2
+
+# fit weighted least squares model
+wls_mult_fit_surface_area <- lm(surface_area_cm3_weekly ~ `Temperature (ºC)` + DLI,
+                   data = dfCoralRateAllEnvMean_exp,
+                   weights = wts_surface_area)
+
+# check for multicollinearity 
+# vif(wls_mult_fit_surface_area)
+# temperature, pH, DLI, and nitrate show multicollinearity 
+
+summary(wls_mult_fit_surface_area)
+
+
+#### rgb ####
+# fit ordinary least squares model 
+## all variables 
+ols_mult_fit_rgb <- lm(rgb_weekly ~ `Temperature (ºC)` + DLI,
+                   data = dfCoralRateAllEnvMean_exp)
+
+# `Temperature (ºC)` + `Salinity (PSU)` + pH + `ORP (mV)` + `Chlorophyll (RFU)` + `Phycoerythrin (RFU)` + DLI + Turbidity + Phosphate + `Nitrate MR` + Ammonia + Calcium
+
+# calculate weights based on residual variance 
+wts_rgb <- 1/ fitted(lm(abs(residuals(ols_mult_fit_rgb)) ~ fitted(ols_mult_fit_rgb)))^2
+
+# fit weighted least squares model
+wls_mult_fit_rgb <- lm(rgb_weekly ~ `Temperature (ºC)` + DLI,
+                   data = dfCoralRateAllEnvMean_exp,
+                   weights = wts_rgb)
+
+# check for multicollinearity 
+
+# vif(wls_mult_fit_surface_area)
+# temperature, pH, DLI, and nitrate show multicollinearity 
+
+summary(wls_mult_fit_rgb)
+
 
 
 ```
 
-
-
-#### Summary of Linear and Weighted Least Squares Regression Models
+#### Summary of (Multiple) Linear (Weighted) Least Squares Regression Models
 Quite a few variables have a significant linear relationship with weight, but none of them have a higher r^2 than 0.20, meaning that the relationships are fairly weak. 
+
+The multivariate linear modeling revealed that most of the environmental variables are very correlated to each other, which suggests that a linear model might not give the best results. 
+
+
+### PERMANOVA
+### Prepare Data
+#### Experimental 
+```{r permanova-data-prep}
+# do the environmental variables influence the response variables? 
+## y variable(s): dependent / experimental variables (weight, surface area, rgb) 
+## x variable(s): environmental variables 
+## grouping variable: Trial
+
+# R sometimes has trouble with assigning proper formats to variables so this sets it as a factor (the proper format)
+dfCoralRateAllEnvMean_exp$Trial <- as.factor(dfCoralRateAllEnvMean_exp$Trial)
+
+# then we'll use the same y dataframe from the regular permanova step
+y <- dfCoralRateAllEnvMean_exp[, c("weight_g_weekly", "surface_area_cm3_weekly", "rgb_weekly")]
+
+```
+
+
 
 # Plots
 ## Weight 
@@ -905,7 +981,7 @@ Quite a few variables have a significant linear relationship with weight, but no
 #### Significant
 ```{r plots-weight}
 # temperature 
-scatter_weight_temp <- dfCoralRateAllEnvMean %>%
+scatter_weight_temp <- dfCoralRateAllEnvMean_exp %>%
   ggplot(aes(x = `Temperature (ºC)`,
              y = weight_g_weekly, 
              colour = Trial)) +
@@ -913,7 +989,7 @@ scatter_weight_temp <- dfCoralRateAllEnvMean %>%
   geom_smooth(method = "lm", se = FALSE, col = 'red') +
   geom_errorbar(aes(ymin = (weight_g_weekly - sd(weight_g_weekly, na.rm = TRUE)),
                     ymax = (weight_g_weekly + sd(weight_g_weekly, na.rm = TRUE)))) +
-  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3", "purple")) +
+  scale_color_manual(values = c("cornflowerblue", "dodgerblue", "deepskyblue2", "darkorange3", "azure3", "springgreen3")) +
   ggtitle("Weight (g) vs Mean Temperature (ºC) Per Trial") +
   ylab("Weight (g)") +
   xlab("Temperature (ºC)") +
@@ -921,6 +997,7 @@ scatter_weight_temp <- dfCoralRateAllEnvMean %>%
   theme(panel.grid.major = element_blank(),
         panel.grid.minor = element_blank(),
         panel.background = element_blank())
+
 scatter_weight_temp
 
 # pH

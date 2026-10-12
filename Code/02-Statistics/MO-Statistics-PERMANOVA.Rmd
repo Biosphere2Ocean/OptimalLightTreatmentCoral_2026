@@ -162,7 +162,7 @@ df_rates %>%
 ```
 
 # PERMANOVAs
-Run non-parametric multivariate analysis of variance (NPMANOVA), also known as permutational multivariate analysis of variance (PERMANOVA), using weight, surface area, and RGB as dependent variables and Treatment and Species as independent/grouping/factor variables. The goal here is to see if there is a significant difference in the variance of the dependent variables as grouped by the independent variables. First we'll test Treatment, then Species, then Treatment and Species. 
+Run non-parametric multivariate analysis of variance (NPMANOVA), also known as permutational multivariate analysis of variance (PERMANOVA), using weight, surface area, and RGB as dependent variables and Treatment, Trial, and Species as independent/grouping/factor variables. The goal here is to see if there is a significant difference in the variance of the dependent variables as grouped by the independent variables. First we'll test Treatment, then Species, then Treatment and Species. 
 
 Note: we are using euclidean distance instead of curtis-bray distance due to having negative values in our dependent data. 
 
