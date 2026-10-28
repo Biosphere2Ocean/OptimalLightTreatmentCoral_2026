@@ -43,6 +43,7 @@ options(dplyr.summarise.inform = FALSE)
 df_rates <- read_csv("InputData/Clean/CoralData/CoralColorWeightData_Rates.csv") %>%
   # get rid of trial PBR 4 due to light timer malfunction keeping lights on continuously for 10 days
   filter(Trial != "PBR 4") %>%
+  filter(Trial != "PBR 4 Control") %>%
   # add Colony 
   mutate(colony_id = substring(frag_id, first = 6, last = 6), .after = frag_id)
 
@@ -191,28 +192,49 @@ Test the effects of each factor variable on the dependent data independently of 
 # set seed for permutations so that they are reproducible 
 set.seed(100)
 
-# trial
+# trial --> significant
 adonis2(y ~ df_rates$Trial, 
-                            method = "euclidean", 
-                            strata = df_rates$colony_id)
+                            method = "euclidean") 
 
-# treatment 
+# treatment --> significant 
 adonis2(y ~ df_rates$Treatment, 
-                            method = "euclidean", 
-                            strata = df_rates$Trial)
+                            method = "euclidean")
 
-# species 
+# species --> significant 
 adonis2(y ~ df_rates$Species, 
-                            method = "euclidean", 
-                            strata = df_rates$colony_id)
+                            method = "euclidean")
 
-# regress y on Trial, Species, Treatment
-# perm_independent <- 
+# colony --> not significant 
+adonis2(y ~ df_rates$colony_id, 
+                            method = "euclidean")
+
+# regress y on Species, Treatment, colony --> significant 
+adonis2(y ~ df_rates$Species + df_rates$Treatment + df_rates$colony_id,
+        method = "euclidean")
+
+# regress y on Species, Trial, colony --> significant 
+adonis2(y ~ df_rates$Species + df_rates$Trial + df_rates$colony_id,
+        method = "euclidean")
+
+# regress y on Species and Trial --> significant 
+adonis2(y ~ df_rates$Species + df_rates$Trial,
+        method = "euclidean")
+
+# regress y on Species and Treatment --> significant 
 adonis2(y ~ df_rates$Species + df_rates$Treatment,
-        method = "euclidean", 
-        strata = df_rates$colony_id)
+        method = "euclidean")
 
-# perm_independent
+# regress y on Species and colony --> significant 
+adonis2(y ~ df_rates$Species + df_rates$colony_id,
+        method = "euclidean")
+
+# regress y on Treatment and colony --> significant 
+adonis2(y ~ df_rates$Treatment + df_rates$colony_id,
+        method = "euclidean")
+
+# regress y on Trial and colony --> significant 
+adonis2(y ~ df_rates$Trial + df_rates$colony_id,
+        method = "euclidean")
 
 # add column with row names that will print out nicely
 # df_perm_independent <- perm_independent %>%
@@ -222,24 +244,6 @@ adonis2(y ~ df_rates$Species + df_rates$Treatment,
 #write.xlsx(x = df_perm_independent, file = "OutputData/StatisticsResults/MOStats_PERMANOVA_SingleIndependent.xlsx")
 
 ```
-Species: 
-  - p = 0.002
-  - F = 5.964463
-  - R^2 = 0.04125117
-
-Treatment: 
-  - p = 0.001
-  - F = 8.024739
-  - R^2 = 0.05550036
-  
-Trial: 
-  - p = 0.001
-  - F = 11.549877
-  - R^2 = 0.15976153
-  
-Residual R^2 = 0.74348694
-
-There is a significant difference in dependent variable variance based on Treatment, Species, and Trial independently of each other. Run `view(perm_independent)` to see full table of results. 
 
 
 ### Test Interaction Between Terms
@@ -247,48 +251,22 @@ There is a significant difference in dependent variable variance based on Treatm
 # set seed for permutations so that they are reproducible 
 set.seed(100)
 
-# regress y on Trial, Species, Treatment, Trial*Species, Trial*Treatment, Species*Treatment
-perm_interaction <- adonis2(y ~ df_rates$Species * df_rates$Treatment * df_rates$Trial, 
+# regress y on Treatment, Trial, Species, colony, Treatment*Trial, Treatment*Species, Treatment*Colony, Trial*Species, Trial*colony, Species*colony --> significant 
+perm_interaction <- adonis2(y ~ df_rates$Treatment * df_rates$Trial * df_rates$Species * df_rates$colony_id, 
                             method = "euclidean")
 
+
 # add column with row names that will print out nicely
-df_perm_interaction <- perm_interaction %>%
-  mutate(ModelNames = rownames(perm_interaction), .before = Df)
+df_perm_interaction <- perm_interaction %>% mutate(ModelNames = rownames(perm_interaction), .before = Df)
 
 # make excel file of results
 #write.xlsx(x = df_perm_interaction, file = "OutputData/StatisticsResults/MOStats_PERMANOVA_SingleInteraction.xlsx")
 
 ```
-Species: 
-  - p = 0.001
-  - F = 7.082575
-  - R^2 = 0.04125117
 
-Treatment: 
-  - p = 0.001
-  - F = 9.529075
-  - R^2 = 0.05550036
+The model of Treatment, Trial, Species, colony, Treatment X Trial, Treatment X Species, Treatment X Colony, Trial X Species, Trial X colony, Species X colony was significant. We'll move onto pairwise permanova post hoc testing.  
 
-Trial: 
-  - p = 0.001
-  - F = 13.715042
-  - R^2 = 0.15976153
-
-Species & Treatment: 
-  - p = 0.026
-  - F = 2.763092
-  - R^2 = 0.03218625
-
-Species & Trial: 
-  - p = 0.001
-  - F = 5.156502
-  - R^2 = 0.12013243
-  
-Residual R^2 = 0.59116826
-
-There is a significant difference in dependent variable variance based on Treatment, Species, Trial, Treatment * Species, and Species * Trial. 
-
-NOTE: Treatment*Trial was automatically removed due to high multicollinearity, meaning that the variables are very highly correlated, which makes it difficult for the model to discern their individual impacts. Run `view(perm_interaction)` to see full table of results.
+NOTE: Treatment*Trial was automatically removed due to high multicollinearity, meaning that the variables are very highly correlated, which makes it difficult for the model to discern their individual impacts. 
 
 ## Post Hoc Tests
 ### Pairwise PERMANOVAs
@@ -300,6 +278,7 @@ Next we'll perform pairwise PERMANOVAs to see exactly which groups are significa
 df_rates$Species <- as.factor(df_rates$Species)
 df_rates$Treatment <- as.factor(df_rates$Treatment)
 df_rates$Trial <- as.factor(df_rates$Trial)
+df_rates$colony_id <- as.factor(df_rates$colony_id)
 
 # then we'll use the same y dataframe from the regular permanova step
 y <- df_rates[, c("weight_g_weekly", "surface_area_cm3_weekly", "rgb_weekly")]
@@ -355,20 +334,6 @@ df_PermPairSpecies <- df_PermPairSpecies %>%
   add_column(term = "Species", .before = "comparison")
 
 ```
-Mcav vs Ofav: 
-  - p = 0.002
-  - F = 7.8457
-  - R^2 = 0.05034
-  
-Mcav vs Pcli: 
-  - p = 0.578
-  - F = 0.3032
-  - R^2 = 0.00206
-  
-Ofav vs Pcli: 
-  - p = 0.007
-  - F = 6.759
-  - R^2 = 0.04396
 
 ##### Treatment
 ```{r pairwise-permanova-independent-treatment}
@@ -419,21 +384,6 @@ df_PermPairTreatment <- df_PermPairTreatment %>%
   add_column(term = "Treatment", .before = "comparison")
 
 ```
-PBR vs Control: 
-  - p = 0.01
-  - F = 7.483
-  - R^2 = 0.0504
-  
-PBC vs Control: 
-  - p = 0.003
-  - F = 11.09
-  - R^2 = 0.07244
-  
-PBR vs PBC: 
-  - p = 0.302
-  - F = 1.0887
-  - R^2 = 0.0068
-
   
 ##### Trial
 ```{r pairwise-permanova-independent-trial}
@@ -445,7 +395,7 @@ perm_pair_trial <- pairwise.adonis2(y ~ Trial, data = df_rates, method = "euclid
 
 # put results into dataframe 
 # list of comparisons
-comparisons_trial <- names(perm_pair_trial)[2:22] #element 1 is the parent call which we don't need
+comparisons_trial <- names(perm_pair_trial)[2:67] #element 1 is the parent call which we don't need
 # empty dataframe to put results in
 df_PermPairTrial <- data.frame()
 
@@ -476,89 +426,78 @@ df_PermPairTrial <- df_PermPairTrial %>%
   mutate(across(where(is.numeric), round, digits = 4))%>%
   add_column(term = "Trial", .before = "comparison")
 
+
+
+
 ```
-Significant Results: 
-  *Control vs PBC*: 
-    Control_vs_PBC 3
-      - p = 0.001
-      - F = 39.8600
-      - R^2 = *0.3118*
-    
-    Control_vs_PBC 1
-      - p = 0.008
-      - F = 7.0570
-      - R^2 = 0.0742
+
+
+##### Colony
+```{r pairwise-permanova-independent-trial}
+# set seed for permutations so that they are reproducible 
+set.seed(100)
+
+# colony model 
+perm_pair_colony <- pairwise.adonis2(y ~ colony_id, data = df_rates, method = "euclidean")
+
+# put results into dataframe 
+# list of comparisons
+comparisons_colony <- names(perm_pair_colony)[2:37] #element 1 is the parent call which we don't need
+# empty dataframe to put results in
+df_PermPairColony <- data.frame()
+
+
+for (i in 1:length(comparisons_colony)) {
+  # set counter as i + 1 in order to avoid grabbing parent call info from perm_pair_trial (element)
+  counter <- i + 1
   
-  *Control vs PBR*: 
-    Control_vs_PBR 2
-      - p = 0.006
-      - F = 7.0970
-      - R^2 = 0.0754
-      
-  *PBR vs PBC*: 
-    PBR 1_vs_PBC 3
-      - p = 0.001
-      - F = 25.5700
-      - R^2 = *0.3296*
-      
-    PBR 3_vs_PBC 3
-      - p = 0.001
-      - F = 18.1600
-      - R^2 = 0.2588  
-      
-    PBC 2_vs_PBR 2
-      - p = 0.003
-      - F = 10.2400
-      - R^2 = 0.1672
-      
-    PBC 2_vs_PBR 2
-      - p = 0.003
-      - F = 10.2400
-      - R^2 = 0.1672
-      
-    PBR 2_vs_PBC 3
-      - p = 0.009
-      - F = 8.8360
-      - R^2 = 0.1477
-      
-    PBR 1_vs_PBC 2
-      - p = 0.017
-      - F = 6.6390
-      - R^2 = 0.1132
-    
-    PBC 2_vs_PBR 3
-      - p = 0.025
-      - F = 5.1780
-      - R^2 = 0.0906
-    
-  *PBR vs PBR*: 
-    None
+  # set comparison
+  comparison <- comparisons_colony[i]
   
-  *PBC vs PBC*: 
-    *PBC 2_vs_PBC 3*
-      - p = 0.001
-      - F = 44.2900
-      - R^2 = *0.4600*
-      
-    PBC 1_vs_PBC 3
-      - p = 0.002
-      - F = 11.4000
-      - R^2 = 0.1799
-    
-    PBC 1_vs_PBC 2
-      - p = 0.003
-      - F = 11.2000
-      - R^2 = 0.1772
+  # grab first row of comparison model stats
+  stats <- perm_pair_colony[[counter]][1,]
+  
+  # combine comparison and stats into dataframe
+  perm <- cbind(comparison, stats)
+  
+  # add perm dataframe to df_PermPairColony dataframe 
+  df_PermPairColony <- rbind(df_PermPairColony, perm)
+}
+
+# remove row names
+rownames(df_PermPairColony) <- NULL
+# rename p-value column
+df_PermPairColony <- rename(df_PermPairColony, p = `Pr(>F)`)
+# round numeric columns to 4 digits
+df_PermPairColony <- df_PermPairColony %>%
+  mutate(across(where(is.numeric), round, digits = 4))%>%
+  add_column(term = "Colony", .before = "comparison")
+
+```
+
+
 
 ##### All Pairwise PERMANOVA Results 
 ```{r pairwise-permanova-results-all}
 # combine all pairwise permanova results into one data frame
-dfPairPermAll <- rbind(df_PermPairSpecies, df_PermPairTreatment, df_PermPairTrial)
+dfPairPermAll <- rbind(df_PermPairSpecies, df_PermPairTreatment, df_PermPairTrial, df_PermPairColony)
 
 # write excel file of results
 # write.xlsx(x = dfPairPermAll, file = "OutputData/StatisticsResults/MOStats_PERMANOVA_Pairwise_All.xlsx")
 
 ```
+
+
+```{r pairwise-permanova-combos}
+# set seed for permutations so that they are reproducible 
+set.seed(100)
+
+# colony model 
+perm_pair_colony <- pairwise.adonis2(y ~ colony_id, data = df_rates, method = "euclidean")
+
+```
+
+
 
 ## Tukey Tests
 For each of the 3 response variables, we are going to run Tukey's Honest Significant Difference (Tukey HSD) test on all 3 independent variables and their significant interactions from the single PERMANOVAs: Species, Trial, Treatment, Species:Treatment, and Species:Trial. 
